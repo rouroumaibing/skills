@@ -71,11 +71,11 @@ ID: {trigger_thread_id}
 
 ```
 1. 获取 MR 变更:
-   gh pr diff {N} --repo {owner}/{repo} > /tmp/mr-review/{N}/diff.patch
+   gh pr diff {N} --repo {owner}/{repo} > <tmp_dir>/mr-review/{N}/diff.patch
    gh pr view {N} --json files --jq '.files[] | {path: .path, status: .status, additions: .additions, deletions: .deletions}'
 
 2. clone MR 代码（如需完整上下文）:
-   git clone --depth=1 --branch={headRefName} {repo_url} /tmp/mr-review/{N}/repo
+   git clone --depth=1 --branch={headRefName} {repo_url} <tmp_dir>/mr-review/{N}/repo
    # 或对大 repo 只 clone 变更文件 + 依赖
 
 3. 构建代码知识:

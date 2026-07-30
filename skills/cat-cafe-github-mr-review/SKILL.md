@@ -1,6 +1,6 @@
 ---
 name: cat-cafe-github-mr-review
-description: "GitHub MR 全链路代码检视流水线。10 阶段双猫对抗式审查，产出行级 DiffNote 并阻塞合入直到闭环。Invoke when 群里收到 @猫猫+MR链接 或需要检视外部 GitHub MR/PR。"
+description: "触发词：@猫猫+MR链接、GitHub MR 检视、PR review。10-phase adversarial code review pipeline producing line-level DiffNotes and blocking merge until closure."
 ---
 
 # GitHub MR Review — 10 阶段全链路代码检视

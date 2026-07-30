@@ -1,16 +1,6 @@
 ---
 name: superpowers-project-experiences
-description: >
-  提炼项目经验（六要素），建立模块索引，生成重生成提示词。
-  产出 PROJECT_EXPERIENCES.md + AGENTS.md + MODULE_INDEX.md + docs/prompts/。
-  triggers:
-    - "总结经验"
-    - "归档"
-    - "建立索引"
-    - "更新索引"
-    - "project experiences"
-    - "archive completed"
-    - "superpowers-project-experiences"
+description: "触发词：总结经验、归档、建立索引、更新索引。Distills six-element engineering knowledge from delivered plans, builds module index, and generates regeneration prompts."
 ---
 
 # Superpowers Project Experiences — 经验提炼 + 模块索引
@@ -236,12 +226,12 @@ description: >
 
 ## 参考项目
 
-`card-battle-framework`（本地仓库）— 完整实践范例：
+`<参考项目>`（本地仓库）— 完整实践范例：
 - `AGENTS.md`: 协作约定 + 按需加载协议 + 文档索引 + 命令速查
 - `MODULE_INDEX.md`: 按功能模块索引（engine/config/ui/shell/games/tooling）
-- `docs/PROJECT_EXPERIENCES.md`: 14 切片决策记录 + 通用工程约定
+- `docs/PROJECT_EXPERIENCES.md`: 多切片决策记录 + 通用工程约定
 
-**验证结论（2026-07-12）**：标签覆盖率 100%，推荐机制工作正常，标签交集匹配能有效按任务类型推荐相关经验。
+**验证结论**：标签覆盖率 100%，推荐机制工作正常，标签交集匹配能有效按任务类型推荐相关经验。
 
 ## 下一步
 
