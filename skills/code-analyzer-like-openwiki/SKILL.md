@@ -273,3 +273,7 @@ docs/wiki/20260730-wiki/
 | Phase 4 未检测 Python 就直接启动服务 | 服务启动失败 | 先 `python3 --version` 检测，失败则提示手动下载 https://www.python.org/downloads/ |
 | README.md 用 include 语法而非物理拼接 | Docsify 无法渲染内容 | Docsify 不支持 include，需将各 .md 内容直接拼入 README.md |
 | _sidebar.md 链接与实际文件名不匹配 | 侧边栏导航 404 | 生成后校验每个链接对应的文件确实存在 |
+
+## 下一步
+
+Wiki 文档生成完成后 → 通知用户查阅 `docs/wiki/<YYYYMMDD-wiki>/`。若用户请求含"不预览"意图 → 仅输出文档路径，不启动 Phase 4。
