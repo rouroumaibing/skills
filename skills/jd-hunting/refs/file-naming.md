@@ -12,9 +12,10 @@
 | 第四步 | 04-gov-list-companies.md | 固定 |
 | 第五步 | 05-nearby-companies.md | 固定 |
 | 第六步 | 06-jobs-summary.md | 固定，补充检索并入此文件 |
-| 第七步 | 07-resume-{公司}-{部门/JobID}-{岗位}.md | 有部门/JobID 时 |
-| 第七步 | 07-resume-{公司}-{岗位}-{序号}.md | 无部门/JobID 时，序号递增 |
-| 第七步 | 07-interview-{公司}-{部门/JobID}-{岗位}.md | 面试问答，同上规则 |
+| 第七步 | 07-interview-{公司}-{部门/JobID}-{岗位}.md | 面试问答，有部门/JobID 时 |
+| 第七步 | 07-interview-{公司}-{岗位}-{序号}.md | 面试问答，无部门/JobID 时，序号递增 |
+| 第九步 | 07-resume-{公司}-{部门/JobID}-{岗位}.md | 有部门/JobID 时 |
+| 第九步 | 07-resume-{公司}-{岗位}-{序号}.md | 无部门/JobID 时 |
 
 **补充检索并入主文件**：补充检索**并入主文件**（如 06-jobs-summary.md），不新建 06b/06c。主文件用 `## 补充检索（{日期}）` 分节。
 
@@ -34,7 +35,7 @@
 <!-- INDEX-HEAD
 step: 第三步 | 产出: 03-jobs-from-sites.md | 状态: 完成
 摘要: 4 站检索，BOSS 12 条 / 智联 8 条 / 猎聘 0 条(黑名单) / 前程 5 条
-黑名单: 猎聘(未登录 Fast-Fail) | 待核实: 3 条(发布时间不明)
+黑名单: 猎聘(WebSearch 无结果) | 待核实: 3 条(发布时间不明)
 -->
 ```
 
@@ -65,7 +66,7 @@ step: 第三步 | 产出: 03-jobs-from-sites.md | 状态: 完成
 | 7 | 07-resume-*.md | 定制简历 | 待跳 | - |
 
 ## 黑名单
-- 猎聘（未登录 Fast-Fail）
+- 猎聘（WebSearch 无结果）
 - {公司全称}（用户自定义黑名单）
 
 ## token 消耗
