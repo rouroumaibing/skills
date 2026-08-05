@@ -1,15 +1,15 @@
 # Phase Details — 10 阶段执行规范
 
-> 本文件是 `cat-cafe-github-mr-review/SKILL.md` 的详细阶段执行规范。
+> 本文件是 `multi-agent-github-mr-review/SKILL.md` 的详细阶段执行规范。
 
 ## Phase 1: 监听触发
 
 ### 触发条件
 
 群消息满足以下模式之一：
-- `@猫猫 {GitHub MR/PR URL}`
-- `@猫猫 帮我检视 {URL}`
-- `@猫猫 review {URL}`
+- `@某agent {GitHub MR/PR URL}`
+- `@某agent 帮我检视 {URL}`
+- `@某agent review {URL}`
 
 ### 解析步骤
 
@@ -29,19 +29,19 @@
 ### 开 Thread
 
 ```
-→ cat_cafe_propose_thread(
+→ multi_agent_propose_thread(
     title: "[MR-Review] {MR title} #{N}",
     reason: "外部 MR 检视任务，需独立 thread 追踪全链路",
-    preferredCats: [检视猫A, 验证猫B],
-    projectPath: "<cat-cafe 工作区路径>",
+    preferredAgents: [agentA, agentB],
+    projectPath: "<multi-agent 工作区路径>",
     reportingMode: "final-only"
   )
 ```
 
-**选猫规则**（从 roster 动态匹配，不 hardcode）：
-- 检视猫 A：跨 family 优先，代码审查能力强的猫
-- 验证猫 B：≠ A，≠ MR 作者，跨 family 优先
-- 协调猫：可由 A 或 B 兼任
+**选 agent 规则**（从 roster 动态匹配，不 hardcode）：
+- 检视 agent A：跨 family 优先，代码审查能力强的 agent
+- 验证 agent B：≠ A，≠ MR 作者，跨 family 优先
+- 协调 agent：可由 A 或 B 兼任
 
 **thread 创建后首条消息**（必须含主 Thread header）：
 ```
@@ -56,11 +56,11 @@ ID: {trigger_thread_id}
 - 规模: {files} files, +{additions}/-{deletions}
 
 ## 分工
-- 检视猫 A: @{catA} — Phase 2/3/9
-- 验证猫 B: @{catB} — Phase 4
-- 协调猫: @{coordinator} — Phase 1/6/7/8/10
+- 检视 agent A: @{agentA} — Phase 2/3/9
+- 验证 agent B: @{agentB} — Phase 4
+- 协调 agent: @{coordinator} — Phase 1/6/7/8/10
 
-@{catA} 请开始 Phase 2 检视准备
+@{agentA} 请开始 Phase 2 检视准备
 ```
 
 ---
@@ -96,7 +96,7 @@ ID: {trigger_thread_id}
 
 ---
 
-## Phase 3: 代码检视（检视猫 A）
+## Phase 3: 代码检视（检视 agent A）
 
 ### 检查维度
 
@@ -126,7 +126,7 @@ END FOR
 
 ```json
 {
-  "reviewer": "catA",
+  "reviewer": "agentA",
   "mr": "{owner}/{repo}#{N}",
   "timestamp": "2026-07-10T10:00:00Z",
   "opinions": [
@@ -147,14 +147,14 @@ END FOR
 
 ---
 
-## Phase 4: 意见验证（验证猫 B — 对抗验证）
+## Phase 4: 意见验证（验证 agent B — 对抗验证）
 
 ### 验证协议
 
-验证猫 B **独立**审查检视猫 A 的每条意见。B 的职责是**质疑**，不是同意。
+验证 agent B **独立**审查检视 agent A 的每条意见。B 的职责是**质疑**，不是同意。
 
 ```
-FOR each opinion in 检视猫A.意见集:
+FOR each opinion in 检视 agent A.意见集:
   1. 独立读对应代码行 + 上下文（不依赖 A 的描述，自己看代码）
   2. 判定:
      - CONFIRM: 问题真实存在 → 维持原级别
@@ -173,7 +173,7 @@ END FOR
 
 ```json
 {
-  "verifier": "catB",
+  "verifier": "agentB",
   "timestamp": "2026-07-10T10:15:00Z",
   "verdicts": [
     {
@@ -215,7 +215,7 @@ Round 2 (仅分歧条目):
     - 仍分歧 → 进 Round 3
 
 Round 3 (终局):
-  仍不一致的条目 → 以检视猫 A 为准（A 有最终裁量权）
+  仍不一致的条目 → 以检视 agent A 为准（A 有最终裁量权）
   → 记录分歧原因（供后续 self-evolution 分析）
 ```
 
@@ -266,7 +266,7 @@ FOR each opinion in 最终意见集:
 建议: {suggestion}
 
 ---
-检视猫: {catA} | 验证猫: {catB} | 共识: {consensus}" \
+检视 agent: {agentA} | 验证 agent: {agentB} | 共识: {consensus}" \
     -F line={opinion.line} \
     -F start_line={opinion.start_line} \
     -F path="{opinion.file}" \
@@ -292,7 +292,7 @@ if [ "$P1_COUNT" -gt 0 ] || [ "$P2_COUNT" -gt 0 ]; then
 | P2 (Should Fix) | $P2_COUNT | 🟡 必须修改 |
 | P3 (Suggestion) | $P3_COUNT | 🟢 可选 |
 
-检视猫: @{catA} | 验证猫: @{catB}
+检视 agent: @{agentA} | 验证 agent: @{agentB}
 请处理 P1/P2 意见后回复"已修改完成"。"
 else
   # 只有 P3 → 不阻塞
@@ -307,14 +307,14 @@ else
 fi
 ```
 
-> **GH 账号 self-approve 陷阱**：所有猫共享一个 GitHub 账号时，`--request-changes` 和 `--approve` 可能被 GitHub 拒绝（同 author）。降级用 `gh pr comment` 落 logical verdict（同 merge-gate 教训）。
+> **GH 账号 self-approve 陷阱**：所有 agent 共享一个 GitHub 账号时，`--request-changes` 和 `--approve` 可能被 GitHub 拒绝（同 author）。降级用 `gh pr comment` 落 logical verdict（同 merge-gate 教训）。
 
 ---
 
 ## Phase 7: 通道通知
 
 ```
-→ cat_cafe_post_message(
+→ multi_agent_post_message(
     content: "## MR #{N} 检视完成
 
 **{MR title}**
@@ -345,7 +345,7 @@ MR 作者在 MR comment 回复"已修改完成" →
 ### 轮询降级
 
 ```
-→ cat_cafe_hold_ball(
+→ multi_agent_hold_ball(
     wakeAfterMs: 300000,  // 5 分钟检查一次
     waitSourceRef: {
       kind: "mr-comment",
@@ -368,7 +368,7 @@ fi
 
 ---
 
-## Phase 9: 审视修改（检视猫 A）
+## Phase 9: 审视修改（检视 agent A）
 
 ```
 1. 获取最新 diff:
@@ -427,7 +427,7 @@ if [ "$REMAINING_P1P2" -eq 0 ]; then
     --body "✅ 检视闭环
 
 所有 P1/P2 意见已处理并确认。
-检视猫: @{catA} | 验证猫: @{catB}
+检视 agent: @{agentA} | 验证 agent: @{agentB}
 检视轮次: {rounds}"
 else
   echo "❌ 仍有 $REMAINING_P1P2 条未解决意见，不能 approve"
@@ -438,7 +438,7 @@ fi
 ### 群通知完成
 
 ```
-→ cat_cafe_post_message(
+→ multi_agent_post_message(
     content: "✅ MR #{N} 检视闭环
 
 **{MR title}**
@@ -446,7 +446,7 @@ fi
 链接: {MR_URL}
 
 所有检视意见已处理，已批准合入。
-检视猫: @{catA} | 验证猫: @{catB} | 检视轮次: {rounds}"
+检视 agent: @{agentA} | 验证 agent: @{agentB} | 检视轮次: {rounds}"
   )
 ```
 

@@ -1,7 +1,7 @@
 # 收尾流程 — Phase 6-10 操作清单
 
 > 检视讨论完 ≠ 结束。必须走完收尾流程，把意见落到 MR 上、阻塞合入、等修改、复审、闭环。
-> 以下为协调猫执行的操作清单（检视猫 A 协助 Phase 9）。
+> 以下为协调 agent 执行的操作清单（检视 agent A 协助 Phase 9）。
 
 ## Step 1: 提交行级 DiffNote（Phase 6）
 
@@ -10,7 +10,7 @@ HEAD_SHA="$(gh pr view {N} --repo {owner}/{repo} --json headRefOid --jq '.headRe
 
 # 对每条最终意见提交行级 comment
 gh api repos/{owner}/{repo}/pulls/{N}/comments --method POST \
-  -f body="**{level}**: {description}\n\n建议: {suggestion}\n\n---\n[检视猫: {catA}/{modelA}🐾] [验证猫: {catB}/{modelB}🐾]" \
+  -f body="**{level}**: {description}\n\n建议: {suggestion}\n\n---\n[检视 agent: {agentA}/{modelA}] [验证 agent: {agentB}/{modelB}]" \
   -F line={line} \
   -f path="{file}" \
   -F commit_id="$HEAD_SHA" \
@@ -30,17 +30,17 @@ gh pr comment {N} --repo {owner}/{repo} --body "⚠️ Logical Review Verdict: R
 ## Step 3: 通知 MR 作者（Phase 7）
 
 ```
-→ cat_cafe_post_message("## MR #{N} 检视完成\n\nP1: {n} | P2: {n} | P3: {n}\n\n@{作者} 请处理检视意见，完成后回复「已修改完成」。")
+→ multi_agent_post_message("## MR #{N} 检视完成\n\nP1: {n} | P2: {n} | P3: {n}\n\n@{作者} 请处理检视意见，完成后回复「已修改完成」。")
 ```
 
 ## Step 4: 等待修改（Phase 8）
 
 ```
 事件驱动: MR comment webhook → github-review-feedback connector 自动唤醒
-轮询降级: cat_cafe_hold_ball({ wakeAfterMs: 300000, waitSourceRef: { kind: "mr-comment", value: "{MR_URL}", expectedSignal: "已修改完成" } })
+轮询降级: multi_agent_hold_ball({ wakeAfterMs: 300000, waitSourceRef: { kind: "mr-comment", value: "{MR_URL}", expectedSignal: "已修改完成" } })
 ```
 
-## Step 5: 复审修改（Phase 9 — 检视猫 A）
+## Step 5: 复审修改（Phase 9 — 检视 agent A）
 
 ```bash
 # 拿最新 diff
@@ -62,18 +62,18 @@ gh pr review {N} --approve --body "✅ 检视闭环，所有意见已处理。"
 # 关闭关联 issue（从 MR body / commit 解析 fixes #N / closes #N）
 for ISSUE_NUM in {resolved_issues}; do
   gh issue close $ISSUE_NUM --repo {owner}/{repo} \
-    --comment "✅ 已通过 MR #{N} 修复并检视闭环。[检视猫: {catA}/{modelA}🐾]"
+    --comment "✅ 已通过 MR #{N} 修复并检视闭环。[检视 agent: {agentA}/{modelA}]"
 done
 
 # 群通知完成
-→ cat_cafe_post_message("✅ MR #{N} 检视闭环，已批准合入。关联 issue 已关闭。")
+→ multi_agent_post_message("✅ MR #{N} 检视闭环，已批准合入。关联 issue 已关闭。")
 
 # 检视 thread 归档
 ```
 
 ## 收尾完成标志
 
-- [ ] 所有 P1/P2 意见已提交为行级 DiffNote（附猫签名）
+- [ ] 所有 P1/P2 意见已提交为行级 DiffNote（附 agent 签名）
 - [ ] 合入门禁已设置（request-changes 或 logical verdict）
 - [ ] MR 作者已通知
 - [ ] 修改已复审（逐条 confirmed）

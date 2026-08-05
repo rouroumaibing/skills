@@ -1,7 +1,7 @@
 # Skills — 技能仓库
 
-本仓库包含一组可复用的 Trae Skill，覆盖代码检视、架构分析、面试备战和经验提炼等场景。
-A collection of reusable Trae Skills covering code review, architecture analysis, interview prep, and experience distillation.
+本仓库包含一组可复用的 Skill，覆盖代码检视、架构分析、面试备战和经验提炼等场景。
+A collection of reusable Skills covering code review, architecture analysis, interview prep, and experience distillation.
 
 ## Skills / 技能索引
 
@@ -10,7 +10,7 @@ All skills in this repository. Click links for full documentation.
 
 | Skill | 功能说明 | 触发词 |
 |---|---|---|
-| [`cat-cafe-github-mr-review`](skills/cat-cafe-github-mr-review/SKILL.md) | 双猫对抗式代码审查，产出行级 DiffNote 并阻塞合入直到闭环 | `@猫猫+MR链接` `GitHub MR 检视` `PR review` |
+| [`multi-agent-github-mr-review`](skills/multi-agent-github-mr-review/SKILL.md) | 双 agent 对抗式代码审查，产出行级 DiffNote 并阻塞合入直到闭环 | `@某agent+MR链接` `GitHub MR 检视` `PR review` |
 | [`code-analyzer-like-openwiki`](skills/code-analyzer-like-openwiki/SKILL.md) | 分析代码库生成含 Mermaid 图表的开放式技术 Wiki，支持本地预览 | `分析代码库` `生成技术文档` `梳理架构` `画架构图` |
 | [`project-to-interview-experiences`](skills/project-to-interview-experiences/SKILL.md) | 将项目源码转化为可口述、防砸盘、带量化数据的面试备战讲稿 | `项目转面试` `面试备战` `面试讲稿` `面试经验` |
 | [`superpowers-project-experiences`](skills/superpowers-project-experiences/SKILL.md) | 从已交付计划提炼可复用工程知识，建立模块索引，生成重生成提示词 | `总结经验` `归档` `建立索引` `更新索引` |

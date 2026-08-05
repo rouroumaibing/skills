@@ -1,16 +1,16 @@
 # 核心知识 — GitHub MR Review
 
-> 本文件是 `cat-cafe-github-mr-review/SKILL.md` 的核心知识参考。
+> 本文件是 `multi-agent-github-mr-review/SKILL.md` 的核心知识参考。
 
-## 三猫角色分离（铁律）
+## 三 agent 角色分离（铁律）
 
 | 角色 | 职责 | 约束 |
 |------|------|------|
-| **检视猫 A** | Phase 3 逐文件审查，产出三级意见；Phase 9 复审修改 | ≠ MR 作者 |
-| **验证猫 B** | Phase 4 对抗验证，逐条质疑检视意见 | ≠ 检视猫 A，≠ MR 作者 |
-| **协调猫** | Phase 1 触发+开 thread，Phase 7/10 通知，全程协调 | 可由 A 或 B 兼任，但不做检视/验证 |
+| **检视 agent A** | Phase 3 逐文件审查，产出三级意见；Phase 9 复审修改 | ≠ MR 作者 |
+| **验证 agent B** | Phase 4 对抗验证，逐条质疑检视意见 | ≠ 检视 agent A，≠ MR 作者 |
+| **协调 agent** | Phase 1 触发+开 thread，Phase 7/10 通知，全程协调 | 可由 A 或 B 兼任，但不做检视/验证 |
 
-> **no self-review 铁律**：检视猫 A ≠ 验证猫 B ≠ MR 作者。跨 family 优先。
+> **no self-review 铁律**：检视 agent A ≠ 验证 agent B ≠ MR 作者。跨 family 优先。
 
 ## 三级意见分类
 
@@ -42,20 +42,20 @@
 | 多 commit / N-in-1 PR | **commit 结构分析**：评估粒度合理性，hotfix commit 单独标注，建议拆 PR（如需要） |
 | 安全相关（commandPolicy / path traversal / crypto） | **专项安全检视**：触发深度安全分析模块 |
 | 协议适配器 / 抽象层 | **接口契约检视**：7-method seam 完整性、vendor-neutrality 验证 |
-| UI/UX 改动 | **审美 review**：指派暹罗猫 @gemini 看 UX（AC-G28 gate） |
+| UI/UX 改动 | **审美 review**：指派 agent @gemini 看 UX（AC-G28 gate） |
 | 跨 family review 需求 | **family 识别**：自动识别作者 family，推荐不同 family 的 reviewer（AC-G9 gate） |
 
 ## 与现有能力的复用关系
 
 | 阶段 | 复用 | 新增 |
 |------|------|------|
-| Phase 1 触发 | `cat_cafe_propose_thread`（开检视 thread） | 群内 @mention+MR链接 解析 |
+| Phase 1 触发 | `multi_agent_propose_thread`（开检视 thread） | 群内 @mention+MR链接 解析 |
 | Phase 2 准备 | `worktree`（clone）、`gh pr diff` | 代码知识构建 |
 | Phase 3 检视 | `receive-review` 的 VERIFY 三道门模式 | 逐文件结构化审查输出 |
 | Phase 4 验证 | — | 对抗验证协议（逐条质疑） |
 | Phase 5 辩论 | `collaborative-thinking` 收敛模式 | 3 轮上限+不一致以检视者为准 |
 | Phase 6 提交 | `gh api` 行级 comment（merge-gate 模式） | DiffNote 批量提交 |
-| Phase 7 通知 | `cat_cafe_post_message` / `cross_post_message` | 群通知 MR 作者 |
-| Phase 8 等修改 | `cat_cafe_hold_ball`（事件驱动/轮询） | "已修改完成"监听 |
+| Phase 7 通知 | `multi_agent_post_message` / `cross_post_message` | 群通知 MR 作者 |
+| Phase 8 等修改 | `multi_agent_hold_ball`（事件驱动/轮询） | "已修改完成"监听 |
 | Phase 9 复审 | `receive-review` Red→Green 模式 | 确认修改正确性 |
 | Phase 10 闭环 | `gh api` resolve discussions | 门禁审批+完成通知 |
