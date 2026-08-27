@@ -13,6 +13,7 @@ All skills in this repository. Click links for full documentation.
 | [`project-to-interview-experiences`](skills/project-to-interview-experiences/SKILL.md) | Converts project source into oral, defensive, quantified interview prep handbook | `项目转面试` `面试备战` `面试讲稿` `面试经验` |
 | [`superpowers-project-experiences`](skills/superpowers-project-experiences/SKILL.md) | Distills reusable engineering knowledge from delivered plans, builds module index, generates regeneration prompts | `总结经验` `归档` `建立索引` `更新索引` |
 | [`jd-hunting`](skills/jd-hunting/SKILL.md) | Full-cycle job hunting: resume parsing, role suggestions, job search, fit scoring, tailored resume and interview prep | `找工作` `求职` `投递简历` `简历定制` `面试准备` |
+| [`mini-code`](skills/mini-code/SKILL.md) | Safety-first code-slimming: classify redundancy first, hold the "no behavior change" bottom line, refuse test-less batch slimming and wrong test merges; proactively detects data-source fan-in redundancy and unnecessary abstractions (YAGNI); covers test-code slimming and acts as a safety guardrail (not initiator) for test-framework form refactoring; especially for AI-generated code | `精简代码` `去除冗余代码` `简化这段代码` `合并重复逻辑` `提取公共模块` `识别过度设计` `不必要的 class` `YAGNI` `合并同源读取` `测试代码精简` `clean up this code` `remove dead code` `consolidate duplicated I/O` `detect unnecessary abstraction` `slim test code` |
 
 ## Development Guide
 

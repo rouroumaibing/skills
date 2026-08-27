@@ -16,6 +16,7 @@ All skills in this repository. Click links for full documentation.
 | [`superpowers-project-experiences`](skills/superpowers-project-experiences/SKILL.md) | 从已交付计划提炼可复用工程知识，建立模块索引，生成重生成提示词 | `总结经验` `归档` `建立索引` `更新索引` |
 | [`jd-hunting`](skills/jd-hunting/SKILL.md) | 求职全流程辅助：简历解析→岗位推荐→招聘网站检索→适配度评分→定制简历与面试问答 | `找工作` `求职` `投递简历` `简历定制` `面试准备` |
 | [`10x-learn`](skills/10x-learn/SKILL.md) | AI 十倍速深度学习闭环：五视角 STORM 调研 + 费曼/测试效应，按 入门→资源→吃透→回顾 五阶段输出提示词与一页速查表 | `系统学习` `吃透某领域` `快速入门` `10xLearn` `深度调研` |
+| [`mini-code`](skills/mini-code/SKILL.md) | 安全的代码精简技能：先分类冗余、守住"行为不变"底线，拒绝无测试兜底的批量精简与错误合并测试；主动识别数据源扇入冗余与不必要的抽象（YAGNI）；覆盖测试代码精简，并对测试框架形态重构充当安全护栏（不主动发起）；尤适用于 AI 生成代码的去重与去过度设计 | `精简代码` `去除冗余代码` `简化这段代码` `合并重复逻辑` `提取公共模块` `识别过度设计` `不必要的 class` `YAGNI` `合并同源读取` `测试代码精简` `clean up this code` `remove dead code` `consolidate duplicated I/O` `detect unnecessary abstraction` `slim test code` |
 
 ## 开发规范 / Development Guide
 
