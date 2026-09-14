@@ -1,6 +1,6 @@
 ---
 name: software-ui-design
-description: "触发词：UI设计、帮我设计界面/产品/App/平台、带我走一遍UI设计流程、UI设计文档、这个产品的UI该怎么做、@software-ui-design。Guides a complete UI design workflow from 0 to 1 for users unfamiliar with design processes: goal definition, user & scenario research, competitor reference, scope convergence, information architecture, core task flows, low-fi layout, interaction & four-state design, visual design system (executable numeric specs, accessibility, copy tone), and testing — each stage mined with concrete questions and self-check criteria before moving on, finally producing PRD + DRD documents plus an interactive HTML prototype that visualizes key pages (grayscale skeleton for layout review, then hi-fi with switchable states after visual alignment) instead of relying on text alone."
+description: "触发词：UI设计、帮我设计界面/产品/App/平台、带我走一遍UI设计流程、UI设计文档、这个产品的UI该怎么做、@software-ui-design。Guides a complete UI design workflow from 0 to 1 for users unfamiliar with design processes: goal definition, user & scenario research, competitor reference, scope convergence, information architecture, core task flows, low-fi layout, interaction & four-state design, visual design system (executable numeric specs with rationale, accessibility, copy tone), and testing — each stage mined with concrete questions and self-check criteria before moving on, finally producing PRD + DRD documents plus an interactive HTML prototype that visualizes key pages (grayscale skeleton for layout review, then hi-fi with switchable states after visual alignment) instead of relying on text alone."
 agent_created: true
 ---
 
@@ -71,11 +71,11 @@ agent_created: true
 ### 阶段9：视觉设计系统
 - 注意：本阶段要问的比别的阶段多，**不要让用户一次答完一堆问题**——分成"核心问"（必答）和"条件问"（可合并成一次轻量追问；用户答不出时由 AI 按行业基线给默认值并标【待确认】）两批。
 - 核心问1（硬约束，先问）：产品有没有既定的品牌调性/配色/VI 必须遵守？有——就以它为锚，后面的参照产品探索只能作为细部启发，整体方向不得违背品牌约束；没有——才进入核心问2 的自由探索。
-- 核心问2（视觉锚点，不要一上来问开放式的"你想要什么风格"）：问用户"有没有一个你觉得'感觉'很像的产品——不需要截图，说个名字就行，比如'像Notion那种简洁'或者'不想要Jira那种密密麻麻的感觉'"。大多数用户在没看到具体东西之前，答不出"我想要现代感/高级感"这类抽象描述，逼他们描述反而会卡住流程；但几乎人人都能说出一个自己用过、并且对其"感觉"有明确好恶的产品。如果用户确实一个参照产品都想不到，就提供几个调性原型供选择，例如"冷静克制的工具感 / 温暖亲和的产品感 / 极简高级的品牌感"，选一个更接近的方向即可，不用精确定义。
+- 核心问2（视觉锚点，不要一上来问开放式的"你想要什么风格"）：问用户"有没有一个你觉得'感觉'很像的产品——不需要截图，说个名字就行，比如'像Notion那种简洁'或者'不想要Jira那种密密麻麻的感觉'"。大多数用户在没看到具体东西之前，答不出"我想要现代感/高级感"这类抽象描述，逼他们描述反而会卡住流程；但几乎人人都能说出一个自己用过、并且对其"感觉"有明确好恶的产品。如果用户确实一个参照产品都想不到，就提供几个调性原型供选择，例如"冷静克制的工具感 / 温暖亲和的产品感 / 极简高级的品牌感"，选一个更接近的方向即可，不用精确定义。用户给出锚点后，顺带追问一句"你欣赏它哪一点"——这句话通常就是后面写数值规格理由时的原料。
 - 条件问1（状态色与无障碍，多仓库/多小组协作场景下不能只靠一句话带过）：①如果产品里有"状态"概念（成功/失败/进行中/告警等），状态色是否需要做到不完全依赖颜色也能分辨（因为色弱用户和黑白打印都会失效）？②键盘能否操作所有关键流程、获得焦点时有没有清晰的视觉提示、给屏幕阅读器用户的关键元素有没有可读的文字标签、正文与背景的对比度是否达到基本可读水平——这几项若留白交给实现方自行判断，不同工程师做出来的结果会互相不一致。
 - 条件问2（文案基调，轻量，不做完整内容策略）：错误提示希望是什么语气（比如"直接说明原因+下一步"还是"更委婉"）？有没有需要全平台统一叫法的专有名词（比如"流水线"和"Pipeline"不要混用）？
 - 自检：假设整个界面变成纯灰阶，状态和层级信息是否大部分还能靠形状、大小、位置区分。
-- 写入文档：①色彩/字体/间距/组件的**可执行数值规格**（间距阶梯、字号阶梯、圆角/阴影规则等具体数值，而不停留在"原则性描述"——因为这份文档要交给独立的小组甚至独立的 AI 各自实现，只写"原则"会导致各自做出来的间距、字号、圆角互相对不上）；用户主动提供了品牌色值/字体就以用户为准，没提供则由 AI 基于选定的视觉锚点产出默认数值规格并标【待确认 / 可调】，**不要因为用户答不出数值就退回"原则性描述"**；②本阶段选定的视觉锚点（参照产品或调性原型），若受品牌约束注明约束来源；③无障碍规格清单（键盘可操作性、焦点态样式、屏幕阅读器标签、最低对比度）；④文案基调原则（提示语气、专有名词统一叫法）。
+- 写入文档：①色彩/字体/间距/组件的**可执行数值规格**（间距阶梯、字号阶梯、圆角/阴影规则等具体数值，而不停留在"原则性描述"——因为这份文档要交给独立的小组甚至独立的 AI 各自实现，只写"原则"会导致各自做出来的间距、字号、圆角互相对不上），**并逐项写明数值背后的理由**（为什么选这套色系、这个字号阶梯想传达什么调性）：只给数值、不给理由的规格，下游无从判断哪些能改、哪些是刻意的，容易被"顺手优化"改走样；用户主动提供了品牌色值/字体就以用户为准，没提供则由 AI 基于选定的视觉锚点产出默认数值规格并标【待确认 / 可调】，**不要因为用户答不出数值就退回"原则性描述"**；②本阶段选定的视觉锚点（参照产品或调性原型），若受品牌约束注明约束来源；③无障碍规格清单（键盘可操作性、焦点态样式、屏幕阅读器标签、最低对比度）；④文案基调原则（提示语气、专有名词统一叫法）；⑤**（条件）导出 DESIGN.md**：若这份视觉规格需要交给独立小组/独立编码 agent 长期消费（即"最终设计文档"章节里不该合并成单文件的那类场景），就把①里的色彩/字体/间距**理由（不只是数值表）**整理成一份独立的 `DESIGN.md`——遵循 google-labs-code/design.md 的格式，**以 prose（设计意图的叙述）为主、token 作为被 prose 引用的具名常量**，不要只填一张数值表；若想先看规范原文、不必先建好文件，可先跑 `npx @google/design.md spec`（加 `--rules` 会连 lint 规则表一起输出）；并提示用户可用 `npx @google/design.md lint DESIGN.md` 校验（Windows/PowerShell 下改用 `designmd` 别名，避免 `.md` 后缀触发文件关联导致的静默失败）。**格式细节一律以官方 `spec` 命令（`npx @google/design.md spec --rules`）实时获取为准，本skill 不复制任何 schema**——该规范当前是 alpha、格式仍在变，本地抄一份副本必然过期。DESIGN.md 只是 DRD 视觉规格面向编码 agent 的一种**导出形态**，不是 DRD 的替代或等价物，真相源始终是 DRD。
 - 对齐后动作，分两步走（默认推荐，但**不是强制**——用户赶时间或喊停时，风格探针可直接跳过进定稿，不要用流程绑架用户）：
   1. **风格探针**：先只做1-2个小尺寸的组件（比如一张卡片、一条导航栏），按选定的锚点用2-3种不同处理方式做出对比（例如"疏朗留白版" vs "紧凑信息密度版"），让用户直接指认喜欢哪个，而不是继续用语言描述。大多数人的审美是"看到具体东西之后才知道自己要什么"，不是"想清楚了才能说出来"——用便宜的小样对比，比一次性赌一个完整方向要可靠得多。注意：如果做出来的几种处理差异不够明显（模型反复生成的常见病），宁可不做对比、直接进定稿，也不要让用户在一堆差不多的选项里做无意义选择。
   2. **定稿**：方向确定后，把这个方向套用到阶段7 的灰阶骨架上，产出完整的高保真 HTML 原型（见"HTML 原型展示"章节），并内置灰阶开关，直接验证本阶段自检标准——点一下"灰阶模式"，看状态与层级是否还分得清。
@@ -130,7 +130,7 @@ agent_created: true
 （各页面空/加载/错误/成功四态 + 反馈规则；若涉及多仓库协同，含跨仓库协同标注）
 
 ## 5. 视觉设计规格
-（色彩/字体/间距/组件的可执行数值规格；无障碍规格清单；文案基调原则；选定的视觉锚点）
+（色彩/字体/间距/组件的可执行数值规格及其理由；无障碍规格清单；文案基调原则；选定的视觉锚点；若需交给独立小组/编码 agent 长期消费，另导出 DESIGN.md）
 
 ## 6. 测试与迭代计划
 （测试对象、任务、关注信号）
@@ -191,5 +191,6 @@ Markdown 文档描述的是"想法"，用户只能在脑子里渲染成画面；
 - 默认三件交付：PRD（`<组件名>-PRD.md`）+ DRD（`<组件名>-DRD.md`）+ HTML 原型（`<组件名>-UI-原型.html`），保存到输出目录并一起展示——让用户既看到结论，又直接看到页面效果。PRD/DRD 拆分是默认结构，不因为参考项目当前是单文件就默认合并回去；但满足上文"降级条件"（单人、单仓库、草案级）时，允许合并为一份 `UI设计文档` + HTML 原型两件交付。
 - 文件位置与命名前缀：如果用户提到项目里已经有统一的设计文档仓库、并且分组件目录存放（比如 `console/`、`hub/` 这类结构），就把文件放进对应组件目录下，并沿用该仓库已有的命名前缀习惯；如果用户没提供这类信息，默认用 `<组件名>` 或 `<项目名>` 作为前缀。**不要主动假设一定要放进某个特定仓库或使用某个特定代码托管平台。**
 - 只有用户明确要 Word 文档时，才读取 docx 相关技能把 PRD 或 DRD 转换成 .docx——不要默认额外生成。
+- DESIGN.md 是**条件交付**：只有阶段9 触发了导出（这份视觉规格要交给独立小组/独立编码 agent 长期消费）时才额外产出 `DESIGN.md`，默认不生成——它是 DRD 视觉规格的导出形态，不是并列的第四份真相源。
 - 用户看完 HTML 原型提的改动意见，先回流修改 DRD（或降级时的设计文档）里对应的设计结论，再同步更新 HTML，避免两者脱节。
 - 交付后不需要在对话里逐字重复内容，简要说明生成了什么、PRD/DRD 里哪些地方是【假设】或【待确认】、原型里哪些是占位，让用户直接打开文件看效果。
