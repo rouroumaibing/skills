@@ -1,7 +1,8 @@
 ---
 name: mini-code
 description: "触发词：精简代码、去除冗余代码、简化这段代码、合并重复逻辑、提取公共模块、识别过度设计、不必要的 class、YAGNI、合并同源读取、测试代码精简、clean up this code、remove dead code、reduce duplication、slim test code、consolidate duplicated I/O、detect unnecessary abstraction。A safety-first code-slimming skill for the above triggers: it classifies redundancy (including data-source fan-in redundancy and unnecessary-abstraction / YAGNI) before touching anything, refuses batch-simplifying code with no test/verification safety net, never merges test cases that cover different edge cases, and never silently changes runtime behavior — even if the user asks to skip these checks. Covers both application and test code."
-agent_created: true
+metadata:
+  agent_created: true
 ---
 
 # Mini-Code：安全的代码精简技能
