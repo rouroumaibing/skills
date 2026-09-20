@@ -1,6 +1,7 @@
 ---
 name: software-story-design
 description: "触发词：设计模块、增加功能、写设计文档、@software-story-design。Guides module design through design documents: purpose, design logic, concept-space modeling, core data structures, interface definitions, and consistency validation. Covers new modules, feature extensions, performance optimization, refactoring, and complex system logical-view modeling (thread models, state machines)."
+version: "1"
 ---
 
 本技能指导如何进行模块设计，通常表现为设计文档的写作。适用场景包括：为系统增加模块、为系统增加功能、为复杂设计增加逻辑图（线程模型、状态机等）。完成设计文档的过程中，通常还需要通过查看代码、运行测试程序等手段验证结论。

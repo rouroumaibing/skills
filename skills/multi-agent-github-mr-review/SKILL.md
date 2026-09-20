@@ -1,6 +1,7 @@
 ---
 name: multi-agent-github-mr-review
 description: "触发词：@某agent+MR链接、GitHub MR 检视、PR review。10-phase adversarial code review pipeline producing line-level DiffNotes and blocking merge until closure."
+version: "1"
 ---
 
 # GitHub MR Review — 10 阶段全链路代码检视

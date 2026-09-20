@@ -1,6 +1,7 @@
 ---
 name: "jd-hunting"
 description: "触发词：找工作、求职、投递简历、简历定制、面试准备。Full-cycle job hunting assistant: resume parsing, role suggestions, multi-site job search, fit scoring, tailored resume and interview prep."
+version: "1"
 ---
 
 # 求职辅助全流程 (jd-hunting)

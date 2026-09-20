@@ -1,8 +1,9 @@
 ---
 name: software-ui-design
-description: "触发词：UI设计、帮我设计界面/产品/App/平台、带我走一遍UI设计流程、UI设计文档、这个产品的UI该怎么做、帮我看看这套设计文档有没有问题、设计文档审查、@software-ui-design。Guides a complete UI design workflow from 0 to 1 for users new to design: goal definition, user & scenario research, competitor reference, scope convergence, information architecture, core task flows, low-fi layout, interaction & four-state design, visual design system (numeric specs with rationale, accessibility, copy tone), and testing — each stage mined with concrete questions and self-check criteria, finally producing PRD + DRD plus an interactive HTML prototype (grayscale skeleton → hi-fi with switchable states) instead of relying on text alone. Also covers auditing an existing design-doc set: it inventories each file's role, runs a ten-stage coverage check, reconciles the same decision across document text / revision history / prototype / real code, self-checks the prototype at runtime, and returns a graded P0/P1/P2 finding list without modifying source documents."
+description: "触发词：UI设计、帮我设计界面/产品/App/平台、带我走一遍UI设计流程、UI设计文档、这个产品的UI该怎么做、帮我看看这套设计文档有没有问题、设计文档审查、@software-ui-design。为零设计基础的用户提供从 0 到 1 的完整 UI 设计工作流：目标定义、用户与场景调研、竞品参照、范围收敛、信息架构、核心任务流、低保真布局、交互与四态设计、视觉规范（含数值规格与无障碍）、测试——每阶段用具体问题与自检标准推进，最终产出 PRD + DRD 及可交互 HTML 原型（灰模→高保真可切态），而非只靠文字。也覆盖已有设计文档审查：清点每文件职责、十阶段覆盖检查、跨“文档/修订史/原型/真实代码”对账、运行时自检原型、返回分级 P0/P1/P2 问题清单（不改源文档）。@software-ui-design"
 metadata:
   agent_created: true
+  version: "1"
 ---
 
 # UI设计全流程引导（从0到1）

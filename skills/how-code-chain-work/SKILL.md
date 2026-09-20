@@ -1,6 +1,6 @@
 ---
 name: how-code-chain-work
-description: "触发词：梳理链路、调用关系、影响面、会不会漏改、这个函数谁在调、改这个安不安全、追功能入口、跨文件重构、漏改风险、排查问题、复现bug、为什么会出这个问题、删除方法、删除函数、删除符号、字段改造、字段数据流、字段读写、只读不写。Forces a confidence-annotated call-chain report before modifying any cross-function/file/module code; prevents missed side-effects from dynamic dispatch (interface/DI/event-bus/reflection), non-call dependencies (symbol import source, resource-location coupling, and object-field read/write data-flow), and deletion omissions; includes a deletion-specific full-repo hit-list check, a field-data-flow read/write reconciliation (catches 'read-but-never-written' after refactors), and Phase 4 mechanical verifications (deleted symbol has zero dangling references; changed field's write/read points are reconciled — modulo declared exemptions); includes a separate diagnostic-mode workflow for 'why did this break' investigations that requires evidence/reproduction rather than plausible-sounding guesses. Use before refactors, multi-caller changes, deletions, field changes, and root-cause investigations."
+description: "触发词：梳理链路、调用关系、影响面、会不会漏改、这个函数谁在调、改这个安不安全、追功能入口、跨文件重构、漏改风险、排查问题、复现bug、为什么会出这个问题、删除方法、删除函数、删除符号、字段改造、字段数据流、字段读写、只读不写。改动跨函数/文件/模块代码前，强制产出带置信度的调用链报告，覆盖动态分发（接口/DI/事件总线/反射）、非调用依赖（符号导入源、资源位置耦合、字段读写流）与删除遗漏；提供删除全仓命中清单、字段读写对账（捕捉“只读不写”）、Phase 4 机械校验，及“为什么挂了”诊断模式（要证据/复现，不要听起来合理的猜测）。@how-code-chain-work"
 metadata:
   agent_created: true
   version: "8"

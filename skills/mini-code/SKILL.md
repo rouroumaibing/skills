@@ -1,8 +1,9 @@
 ---
 name: mini-code
-description: "触发词：精简代码、去除冗余代码、简化这段代码、合并重复逻辑、提取公共模块、识别过度设计、不必要的 class、YAGNI、合并同源读取、测试代码精简、clean up this code、remove dead code、reduce duplication、slim test code、consolidate duplicated I/O、detect unnecessary abstraction。A safety-first code-slimming skill for the above triggers: it classifies redundancy (including data-source fan-in redundancy and unnecessary-abstraction / YAGNI) before touching anything, refuses batch-simplifying code with no test/verification safety net, never merges test cases that cover different edge cases, and never silently changes runtime behavior — even if the user asks to skip these checks. Covers both application and test code."
+description: "触发词：精简代码、去除冗余代码、简化这段代码、合并重复逻辑、提取公共模块、识别过度设计、不必要的 class、YAGNI、合并同源读取、测试代码精简、clean up this code、remove dead code、reduce duplication、slim test code、consolidate duplicated I/O、detect unnecessary abstraction。安全第一的代码精简：动手前先分类冗余（含数据源扇入冗余与不必要抽象/YAGNI）；无测试/验证安全网时拒绝批量精简；不合并覆盖不同边缘的测试用例；即使你要求跳过也不静默改变运行时行为。覆盖应用与测试代码。@mini-code"
 metadata:
   agent_created: true
+  version: "1"
 ---
 
 # Mini-Code：安全的代码精简技能
@@ -164,7 +165,7 @@ metadata:
 - **当用户主动提出这类改造时**：可以作为护栏承接，但必须按「测试代码精简专属要求」逐项核对——改造前后每个用例覆盖的场景 / 边界 / 断言点清单完全一致，总覆盖语句数不减少，每个边界 / 异常用例仍有独立身份（parametrize 是把「多个不同用例」装进一个驱动，不是把「多个不同场景」合并成一个场景）。任一用例的场景 / 断言点会被合并掉 → 拒绝（适用底线 2 / 3）。
 - **mini-code 不主动发起这类改造**：仅因「代码扁平、没用上框架的 parametrize / fixture」就提议把所有独立用例重写为框架风格，属于「为优雅而重构」，超出了「去冗余 / 精简」的本分。可以把它作为**可选建议**提一句，但绝不能当作「冗余待处理项」列进精简清单、更不能默改。
 
-这与 A9+ 的区别：A9+ 是「场景与断言点完全相同的两个用例 → 删掉其一」；此处是「每个用例场景不同 → 只改表达形式、保留所有用例」。两者都不能合并不同场景，但动作方向相反（一个删、一个改形）。详见 `./evals/evaluation.md` 的 A11 类（本技能只引用，不内嵌）。
+这与 A9+ 的区别：A9+ 是「场景与断言点完全相同的两个用例 → 删掉其一」；此处是「每个用例场景不同 → 只改表达形式、保留所有用例」。两者都不能合并不同场景，但动作方向相反（一个删、一个改形）。详见 `./docs/evaluation.md` 的 A11 类（本技能只引用，不内嵌）。
 
 ## 已知局限（如实告知用户，不要假装能解决）
 
@@ -176,12 +177,12 @@ metadata:
 
 本技能不附虚构测试集。历史上曾带有 `tests/` 场景目录，但其验证结果属于作者自评的模拟推演、并非独立盲测，已于 2026-08 重写时移除。如需重建评估夹具，建议先将本目录的完整快照保存到 `<repo>/backups/mini-code-<timestamp>/` 再动手。
 
-本技能的正式评估设计见同目录 `./evals/evaluation.md`（与技能同处一个目录，但**不是运行时指令**——本文件只引用、不内嵌，技能实际执行时不需要读它）。采用**双轨制**：Track A 判断准确度（11 类 × 正/反向标注样本，假阳性率须为 0）、Track B 抗施压底线坚守（5 个对抗场景，底线坚守率须为 100%）。修改本文件后应按该文档重跑两轨，任一不达标即阻塞发布。
+本技能的正式评估设计见同目录 `./docs/evaluation.md`（与技能同处一个目录，但**不是运行时指令**——本文件只引用、不内嵌，技能实际执行时不需要读它）。采用**双轨制**：Track A 判断准确度（11 类 × 正/反向标注样本，假阳性率须为 0）、Track B 抗施压底线坚守（5 个对抗场景，底线坚守率须为 100%）。修改本文件后应按该文档重跑两轨，任一不达标即阻塞发布。
 
 推荐的验证路径：
 
 1. **真实代码试用**：在你真实项目的一小段代码上使用本技能——比任何虚构场景都有说服力。
-2. **重大修改后盲测**：修改本文件后，在一个干净的会话里（不带修改过程的上下文）跑一遍 `./evals/evaluation.md` 的两轨样本——既查分类准不准（Track A），也查用户施压时底线守不守得住（Track B）。重点不是"回答得像不像"，而是：伪冗余有没有被误合、不该拆的 class 有没有被误拆、底线有没有被突破。
+2. **重大修改后盲测**：修改本文件后，在一个干净的会话里（不带修改过程的上下文）跑一遍 `./docs/evaluation.md` 的两轨样本——既查分类准不准（Track A），也查用户施压时底线守不守得住（Track B）。重点不是"回答得像不像"，而是：伪冗余有没有被误合、不该拆的 class 有没有被误拆、底线有没有被突破。
 3. 每次修改本文件后，重新通读「不可突破的底线」一节与「数据源扇入冗余」「抽象必要性检查」两节，确认：五条底线的语义没有被弱化；主动提案仍被明确标记为"建议"且交用户决定，没有出现"默改结构"的倾向。
 
 ## 一个可直接使用的开场确认清单

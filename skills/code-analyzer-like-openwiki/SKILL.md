@@ -1,6 +1,7 @@
 ---
 name: code-analyzer-like-openwiki
 description: "触发词：分析代码库、生成技术文档、梳理架构、画架构图。Systematic codebase analysis producing open technical Wiki with Mermaid diagrams, dependency graphs, and feature stories."
+version: "1"
 ---
 
 # OpenWiki Codebase Analyzer — 代码库分析 → 技术 Wiki 生成
