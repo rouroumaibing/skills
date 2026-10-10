@@ -1,0 +1,11 @@
+# 不要在此文件写任何密码/密钥。认证靠 SSH 公钥免密（ssh-agent 或 ~/.ssh/config）。
+conn:
+  public-ip: xx.xx.xx.xx        # 跳板机公网地址
+  private-ip: xx.xx.xx.xx       # 跳板机私网地址（内网优先，连不上回退公网）
+
+codehub:                        # 本地代码库：组件别名 -> 本地仓库路径（查最新代码用）
+  components-1: D:\xxx\         
+  components-2: ~/work/xxx
+
+worktree:
+  workdir: xx/                  # 客户报版本时，只读 worktree 的工作目录
