@@ -33,6 +33,9 @@
   `node-exec <node> <command...> --scenario node|network|pod`，如
   `--scenario node n1 df -h`、`--scenario network n1 ss -tulnp`、`--scenario pod n1 crictl ps -a`。
   注意 `--scenario` 放在 `<node>` 之前。
+- 容器网络视角（精简镜像无 shell / 业务容器 crash / NetworkPolicy 容器侧验证）：
+  `pause-pid <node> --name <pod>` 自动探测 containerd/docker 返回 pause 容器 PID
+  → `nsenter-net <node> <pid> <network 白名单命令>`；详见 modes/diagnostics/network.md「容器视角」。
 
 ### 3. 场景深挖（发现的出口）
 证据落入某类场景时，读对应清单**按证据选路**（清单是地图，不是轨道）：

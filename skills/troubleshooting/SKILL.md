@@ -3,7 +3,7 @@ name: troubleshooting
 description: "触发词：排查问题、定位问题、查日志、查 pod、客户报错、某组件某版本出问题、切换到某个版本看代码、多个仓库里找代码、连环境看机器/集群/节点日志、查 k8s pod。只要用户提到排查/定位问题/查日志/查pod/客户报错/版本定位/多仓库搜代码，就应使用本 skill，即使用户没明确说 troubleshooting。统一入口：(1) 连跳板机（config.conn 的公网/私网 IP）查集群 pod/节点日志；(2) 在多个本地代码库（config.codehub）查代码；(3) 根据客户反馈的报错与软件版本，切到对应版本只读 worktree（config.worktree.workdir）定位问题（通常无法连客户环境）。| Troubleshooting unified entry: SSH to the bastion (config.conn public/private IP) to inspect cluster pod/node logs, search across local code repos (config.codehub), and locate issues by switching to the customer's reported component+version read-only worktree (config.worktree.workdir) — typically without access to the customer environment. Use this skill whenever the user mentions troubleshooting, locating a bug, reading logs, inspecting pods, customer-reported errors, version-specific code lookup, or cross-repo code search — even if they don't explicitly say 'troubleshooting'. @troubleshooting"
 metadata:
   agent_created: true
-  version: "5"
+  version: "6"
 ---
 
 # Troubleshooting
@@ -13,7 +13,7 @@ metadata:
 ## 依赖与初始化
 
 - **依赖**：`python3`（≥3.8）、`PyYAML`、`paramiko`、`git`，以及跳板机上的 `kubectl`。SSH 传输用 Paramiko（纯 Python，不依赖本机 OpenSSH，因此没有 Windows `ControlMaster`/`ControlPath` 的 `getsockname failed` 问题）；节点跳转仍在跳板机上用 `ssh`。脚本为只读 Python（配置用 PyYAML 解析）。
-- **首次配置**：编辑 `config.yaml` 填入 `conn`（跳板机公网/私网 IP，SSH 用户默认 `root`）、`codehub`（组件→本地仓库路径，map 形式可带 `aliases`/`selector`）、`worktree.workdir`（版本 worktree 目录）。可选覆盖键：`conn.user` / `conn.namespace` / `conn.context` / `conn.scan_dirs`（详见 per-skill README）。**不要写任何密码/密钥**，认证走 SSH 公钥免密。**首次免密用 `scripts/setup_ssh.py`**：`local`（本机→跳板机）/ `bastion`（跳板机→节点）/ `status`（体检），幂等可重复运行；两类密钥的分发与防覆盖策略见同目录 `README.md` 第 3 节。注意：`setup_ssh.py` 是本 skill **唯一允许写操作**的配置工具，由运维人员手动运行，排查过程不要调用它。
+- **首次配置**：编辑 `config.yaml` 填入 `conn`（跳板机公网/私网 IP，SSH 用户默认 `root`）、`codehub`（组件→本地仓库路径，map 形式可带 `aliases`/`selector`）、`worktree.workdir`（版本 worktree 目录）。可选覆盖键：`conn.user` / `conn.namespace` / `conn.context` / `conn.scan_dirs`（详见 per-skill README）。**不要写任何密码/密钥**，认证走 SSH 公钥免密。**首次免密用 `scripts/setup_ssh.py`**：`local`（本机→跳板机）/ `bastion`（跳板机→节点）/ `status`（体检），另有 `export-bundle` / `import-bundle` 用于免密凭据的分发与导入（见 README 第 3 节），幂等可重复运行；两类密钥的分发与防覆盖策略见同目录 `README.md` 第 3 节。注意：`setup_ssh.py` 是本 skill **唯一允许写操作**的配置工具，由运维人员手动运行，排查过程不要调用它。
 - **环境访问只通过 `scripts/`**：Agent 不得直接执行 `ssh` / `kubectl`；脚本内部已是「ssh 到跳板机 IP → 在跳板机上执行 kubectl」，连接信息只来自 `config.conn`，Agent 不得自己拼接 IP 或主机名。详见下方「安全红线」。
 
 ## 场景路由
