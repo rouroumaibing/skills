@@ -22,6 +22,7 @@ All skills in this repository. Click links for full documentation.
 | [`quick-note`](skills/quick-note/SKILL.md) | 双层决策留痕：写实现代码时顺手追加 breadcrumbs（选择/原因/备选/状态），用户或 AI 拍板、推翻方案时生成编号正式 ADR，两层以取代链互连，把"当初为什么这么写 → 后来为什么改"留成可追溯链条；落点先判顺序、命中即停（使用者显式指定 → 记录根下已有 `docs/` → 复用仓内其它 ADR 目录 → 新建），复用既有目录时跟随其编号/命名/字段/索引约定，支持多仓并列的工作区根，落点不在版本控制内时先说明再写 | `记录决策` `顺手记` `留痕` `为什么要这么写` `ADR` `决策记录` `记录到某目录` `决策写进某目录` `breadcrumbs` `@quick-note` |
 | [`clean-change-comments`](skills/clean-change-comments/SKILL.md) | 修改代码注释与文档正文时强制只描述当前状态、禁止变更叙述（原来是/改为/不再/已废弃/禁止xxx改用xxx）；变更历史进变更记录/commit，方案选型进决策记录；仅允许「防回退说明」与「非直觉业务规则/外部约束」两类一行注释；附变更叙述扫描脚本，用于清理已有文件中的残留 | `清理注释` `整理注释` `删掉变更叙述` `只描述现状` `注释规范` `变更记录` `决策记录` `提交前自查注释` `顺手清理残留注释` `@clean-change-comments` |
 | [`troubleshooting`](skills/troubleshooting/SKILL.md) | 排查问题统一入口：连开发/测试环境查 pod/节点/机器日志、在多个本地代码库查代码、按客户报错与软件版本切换到对应版本代码定位问题（通常无法连客户环境）；三场景分流、证据分级（已证实/推测）、只读脚本与受保护环境确认 | `排查问题` `定位问题` `查日志` `查 pod` `客户报错` `版本定位` `多仓库查代码` `troubleshooting` |
+| [`skill-freshness-audit`](skills/skill-freshness-audit/SKILL.md) | 审计 skill 库的新鲜度 / 冗余 / 事实性过期：按 0→1 私有知识（persist）/ 1→100 流程代偿（sunset 候选）/ 治理边界（never-remove）分类，附可追溯行号证据；建议型，绝不自动修改 / 删除 / 下线任何 skill | `审计skill库` `检查skill是否过时` `skill保质期` `哪些skill冗余` `skill特有性检查` `生成skill审计清单` |
 
 ## 开发规范 / Development Guide
 
