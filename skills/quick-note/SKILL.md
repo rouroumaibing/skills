@@ -1,6 +1,6 @@
 ---
 name: quick-note
-description: "触发词：记录决策、顺手记、留痕、为什么要这么写、当初为什么、当时怎么想的、ADR、决策记录、架构决策记录、记录到某目录、决策写进某目录、breadcrumbs、决策回溯、@quick-note。以两层记录代码与技术决策的“为什么”：实现中追加的轻量 breadcrumbs（多方案取舍、模糊需求的假设补全、workaround、偏离约定、短期权衡、错误处理策略、自决的模块布局），以及决策确立或被推翻（用户或 AI 经分析）时编号的正式 ADR；两层用双向取代链相连，让“隐式选择→显式决策”的演变可读。@quick-note"
+description: "触发词：记录决策、顺手记、留痕、为什么要这么写、当初为什么、当时怎么想的、ADR、决策记录、架构决策记录、记录到某目录、决策写进某目录、breadcrumbs、决策回溯、@quick-note。以两层记录代码与技术决策的“为什么”：实现中追加的轻量 breadcrumbs（多方案取舍、模糊需求的假设补全、workaround、偏离约定、短期权衡、错误处理策略、自决的模块布局），以及决策确立或被推翻（用户或 AI 经分析）时编号的正式 ADR；两层用双向取代链相连，让“隐式选择→显式决策”的演变可读。@quick-note 本 skill 记录决策理由（ADR/breadcrumbs），不规定注释写法（注释只描述现状的约定不在本 skill 范围）。"
 metadata:
   agent_created: true
   version: "5"
@@ -56,7 +56,7 @@ metadata:
   - 当前目录在某个 git 仓内 → 取该仓的根（`git rev-parse --show-toplevel`）；
   - 否则（多仓并列的工作区根等）→ 取当前目录。
 
-  为什么要强调"不是裸 cwd"：会话从仓库子目录启动是常态（比如 `repo/internal/domains/auth`），拿 cwd 当根会让 ① 去找 `auth/docs/`、② 在 `auth/` 下建 `auth/docs/architecture-decision-record/`——就地生成一棵没人想要的目录树。
+  强调"不是裸 cwd"：会话常从仓库子目录启动（如 `repo/internal/domains/auth`），拿 cwd 当根会就地生成一棵没人想要的目录树。
 - **现场**：本次写入的目标目录。情形③ 下就是使用者指定的那个目录，其余情形下就是记录根下的记录目录。全文说"跟现场""与现场一致"，都是这个意思。
 
 ### 什么算「已有 ADR 目录」（① 与 ② 共用，只在这里定义一次）

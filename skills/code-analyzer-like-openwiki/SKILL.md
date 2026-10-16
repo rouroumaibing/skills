@@ -1,6 +1,6 @@
 ---
 name: code-analyzer-like-openwiki
-description: "触发词：分析代码库、生成技术文档、梳理架构、画架构图。Systematic codebase analysis producing open technical Wiki with Mermaid diagrams, dependency graphs, and feature stories."
+description: "触发词：分析代码库、生成技术文档、梳理架构、画架构图。Systematic codebase analysis producing open technical Wiki with Mermaid diagrams, dependency graphs, and feature stories. 本 skill 产出代码库技术文档与架构图，不涉及改代码前的调用链/漏改影响面分析。"
 version: "1"
 ---
 
@@ -97,7 +97,7 @@ version: "1"
     };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/docsify/lib/plugins/search.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.mjs';
     mermaid.initialize({ startOnLoad: true });

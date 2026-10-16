@@ -32,6 +32,7 @@ All skills in this repository. Click links for full documentation.
 2. **术语保留**：正文中文叙述，类名/API/配置 Key/专有名词保留英文原文（如 `ThreadPoolExecutor`、`JWT`、`epoll`）
 3. **环境中立**：路径用相对路径（如 `./src`）或占位符（如 `<root_dir>`），无个人敏感信息
 4. **Frontmatter 顶层只放白名单字段**：顶层仅允许 `name` / `description` / `license` / `allowed-tools` / `metadata` / `compatibility`。本仓库私有字段（`agent_created`、`version` 等）一律挂到顶层 `metadata:` 之下，不要占顶层 key。
+5. **描述自包含**：`description` 应强化本 skill 自身职责（"本 skill 做 X / 不涉及 Y"），不写成与某个具体兄弟 skill 的对比（如"与 X 区别：…"）。需要表达边界时用"不涉及…""不做…"等自包含措辞，避免点名其它 skill。
 
 ### 新增 Skill
 

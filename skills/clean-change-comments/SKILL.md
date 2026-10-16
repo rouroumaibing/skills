@@ -1,6 +1,6 @@
 ---
 name: clean-change-comments
-description: "触发词：清理注释、整理注释、删掉变更叙述、注释规范、文档注释、只描述现状、不要写原来是/改为/不再、变更记录、决策记录、提交前自查注释、顺手清理残留注释、代码里为什么有历史说明。改代码、写/改代码注释、改文档正文时，强制让注释与文档正文只描述当前状态，禁止出现「原来是/改为/不再/已废弃/禁止xxx改用xxx」等变更叙述；变更历史放进变更记录章节或 commit message，方案选型与被否决备选项放进开发文档的决策记录章节；只允许保留「防回退说明」和「非直觉业务规则/外部约束」两类一行注释。处理已有文件时顺手扫描并清理残留的变更叙述类注释。| Clean-code comments & docs convention: keep code comments and documentation bodies describing only the current state, banning change-narration phrases (原来是/改为/不再/已废弃/禁止xxx改用xxx); route change history to a changelog or commit message and design decisions/rejected alternatives to a decision-record section; only two kinds of one-line rationale comments are permitted (anti-regression notes, non-intuitive business rules/external constraints); ships a scanner script that flags residual change-narration comments in existing files. @clean-change-comments"
+description: "触发词：清理注释、整理注释、删掉变更叙述、注释规范、文档注释、只描述现状、不要写原来是/改为/不再、变更记录、决策记录、提交前自查注释、顺手清理残留注释、代码里为什么有历史说明。改代码、写/改代码注释、改文档正文时，强制让注释与文档正文只描述当前状态，禁止出现「原来是/改为/不再/已废弃/禁止xxx改用xxx」等变更叙述；变更历史放进变更记录章节或 commit message，方案选型与被否决备选项放进开发文档的决策记录章节；只允许保留「防回退说明」和「非直觉业务规则/外部约束」两类一行注释。处理已有文件时顺手扫描并清理残留的变更叙述类注释。| Clean-code comments & docs convention: keep code comments and documentation bodies describing only the current state, banning change-narration phrases (原来是/改为/不再/已废弃/禁止xxx改用xxx); route change history to a changelog or commit message and design decisions/rejected alternatives to a decision-record section; only two kinds of one-line rationale comments are permitted (anti-regression notes, non-intuitive business rules/external constraints); ships a scanner script that flags residual change-narration comments in existing files. @clean-change-comments 本 skill 规范注释/文档正文只写现状（禁变更叙述），不负责记录决策理由（决策理由记入 ADR/决策记录章节）。"
 metadata:
   agent_created: true
   version: "1"
@@ -47,7 +47,7 @@ metadata:
 - 替用指令类：**禁止 xxx 改用 xxx / 改用 / 不要再用 / 切勿 / 不要再 / 不应该再**
 - 动作回顾类：**新增了 / 删除了 / 重构了 / 优化了 / 迁移到 / 升级到 / 已修复**
 
-为什么：这些词描述的都是「过去到现在的差」，而文件里剩下的永远是「现在」。叙述和现状会随时间错位，错位后的叙述比没有更糟——它会主动误导。
+为什么：禁词描述的是「变化过程」，而文件只应留存「现在」；错位后的叙述会主动误导后来者。
 
 **正确做法**：直接写成现状。修改即作废旧内容，不留痕迹。
 
@@ -99,7 +99,7 @@ var cache sync.Map
 
 「为什么选 A 不选 B」「当时考虑了哪些方案」「为什么否决了 C」这类内容，写入对应开发文档的 **「决策记录」** 章节（或 ADR）。**代码里不重复这些**——代码只体现最终选择。
 
-理由：决策推理是给「未来要改这段代码的人」看的，但塞进代码会变成又一处会过时的叙述；放决策记录里，既不与代码耦合，又能在需要时追溯。
+理由：决策推理塞进代码会变成又一处会过时的叙述；放决策记录里既不与代码耦合，又能在需要时追溯。
 
 ### 规则 5：提交前自检 + 顺手清理残留
 
