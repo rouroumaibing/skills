@@ -1,0 +1,28 @@
+# governance/redlines.yaml —— 本项目机器判据 starter（由 harness-workflow 审计引导生成）
+#
+# 作用：harness-workflow 的 audit/scripts/ 检查器从这里读"机器判据"
+# （GOVERNANCE_DIR 指向本目录）。缺失时相关检查降级为软审（报告注明
+# "无机器判据来源"）。本文件是起步模板：每一段都按项目实际调整；
+# 调整属配置变更，建议由人确认后合入。
+# 完整字段与历史权威版见 harness-workflow 仓库 git 56ba8a7（governance/redlines.yaml）。
+
+schema_version: 1
+
+# R-GOAL-001：契约的客观判定字段（成功判据/边界/范围表）不得出现这些模糊词
+forbidden_words: [适当, 尽量, 等等, 大概, 合理, 必要时]
+
+# R-RISK-001：从 diff 推算风险下限——命中的路径/模式一律按 high 对待
+risk_patterns:
+  - path_glob: "**/auth/**"          # 认证 / 权限
+  - path_glob: "**/payment/**"       # 支付 / 计费
+  - path_glob: "**/migration/**"     # 数据迁移 / 删除
+  - path_glob: "**/secrets/**"       # 密钥 / 凭据
+  - pattern: "DROP TABLE|TRUNCATE|GRANT|REVOKE|ALTER TABLE"   # 不可逆 DDL
+
+# R-SEC-004：允许 AI 写入的路径（仅数据文件；单文件体积见 thresholds）
+ai_writable_paths:
+  - "docs/**"
+  - "**/*.md"
+
+thresholds:
+  ai_writable_max_bytes: 65536       # AI 可写区单文件上限（64KB）

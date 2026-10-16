@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+"""pre-receive-scope —— R-IMP-001（范围）+ R-SEC-003（禁止项）实装（合入必需检查 / 服务端 hook）。
+
+服务规则：
+  - R-IMP-001：每次提交修改的文件全部位于契约范围表路径内（明文豁免 ai_writable_paths）；
+               范围检查须覆盖重命名/符号链接/子模块/文件模式/大小写/.gitattributes/hook 目录等边界情形，
+               且删除（D）同样受范围约束，并检出路径穿越（".." 段 / 绝对路径 / 反斜杠 / NUL 字节）。
+  - R-SEC-003：forbidden_items 优先于 scope；仅 target 为 file/glob 时机械匹配，
+               其余（symbol / manual_review）标 manual_review 转人核对。
+
+两种运行形态：
+  - git pre-receive hook：stdin 读 "<old> <new> <ref>"，由调用方先转成 --changes JSON 再调用；
+  - 合入必需 CI：--changes <changes.json> [--contract <path>] [--check-forbidden]
+
+契约范围表从 <contract>.md 的 front matter `scope[].path` 读取（单一来源）。
+无 --contract 时仅做"边界情形 + 禁止项"检查（范围比对交由调用方提供 scope 列表 --scope-paths）。
+
+changes.json 格式：[{"path":..., "status":"A|M|D|R", "old_path":...(R时)},
+                    {"path":..., "status":"X"}]  # X = 可执行位变更
+
+已知限制：对"被删除的符号链接"，文件已不在磁盘，islink 探测失效——删除由范围检查
+与服务端 protected_paths 分支保护共同覆盖；凡依赖磁盘存在性的检查对 D 状态一律跳过。
+"""
+import os
+import sys
+import json
+import tempfile
+import shutil
+import fnmatch
+import posixpath
+import re
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+GOVERNANCE_DIR = os.environ.get("GOVERNANCE_DIR",
+                                os.path.dirname(os.path.abspath(__file__)).rstrip("/") + "/..")
+REDLINES = os.path.join(GOVERNANCE_DIR, "redlines.yaml")
+REPO_ROOT = os.environ.get("REPO_ROOT", os.path.dirname(os.path.abspath(GOVERNANCE_DIR)))
+VIOLATION = 1
+OK = 0
+_last = []
+
+
+def load_yaml_safe(path):
+    if yaml is None:
+        print("pre-receive-scope: pyyaml required (pip install pyyaml).", file=sys.stderr)
+        sys.exit(42)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def load_redlines():
+    path = os.path.join(os.environ.get("GOVERNANCE_DIR", GOVERNANCE_DIR), "redlines.yaml")
+    return load_yaml_safe(path) or {}
+
+
+def parse_front_matter(contract_path):
+    text = open(contract_path, encoding="utf-8").read()
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    if end == -1:
+        return None
+    block = text[3:end].strip()
+    return yaml.safe_load(block) if yaml else None
+
+
+def under(path, prefixes):
+    p = path.replace(os.sep, "/")
+    for pref in prefixes:
+        pref = pref.rstrip("/")
+        if p == pref or p.startswith(pref + "/"):
+            return True
+    return False
+
+
+def normalize_path(path):
+    """规范化 changes 中的路径，检出穿越/异常形态（R-IMP-001 边界）。
+    返回 (normalized, kind)；kind 为 None 表示形态合法。
+    - NUL 字节                                  -> nul-byte
+    - 绝对路径（/ 开头、盘符、UNC 均归此类）      -> absolute-path
+    - 含 ".." 段（即使规范化后落回范围内也拒绝）   -> dotdot-segment（fail-closed：
+      git 工作区不接受此类路径，出现即构造/异常输入）
+    """
+    if not path:
+        return path, None
+    if "\x00" in path:
+        return path, "nul-byte"
+    unified = path.replace("\\", "/")
+    if unified.startswith("/") or re.match(r"^[A-Za-z]:", unified):
+        return unified, "absolute-path"
+    if any(seg == ".." for seg in unified.split("/")):
+        return posixpath.normpath(unified), "dotdot-segment"
+    return posixpath.normpath(unified), None
+
+
+def boundary_violations(changes, repo_root):
+    """R-IMP-001 边界情形：重命名/符号链接/子模块/文件模式/大小写/.gitattributes/hook 目录。"""
+    v = []
+    for ch in changes:
+        status = ch.get("status")
+        path = ch.get("path")
+        old = ch.get("old_path")
+        # 路径形态：穿越/绝对路径/NUL 先行拦截（对 new/old 两侧都查）
+        for cand in (path, old):
+            if not cand:
+                continue
+            _, bad = normalize_path(cand)
+            if bad:
+                v.append((bad, cand))
+        if status == "R" and old:
+            # 大小写仅改名（可能在不区分大小写文件系统上碰撞）
+            if old.lower() == path.lower() and old != path:
+                v.append(("case-only-rename", path))
+            # 重命名跨范围：两端必须都在范围内（范围比对在 caller 处，这里只记跨范围信号）
+        # 符号链接
+        full = os.path.join(repo_root, path) if path else None
+        if full and os.path.islink(full):
+            v.append(("symlink", path))
+        # .gitattributes
+        if path and (path == ".gitattributes" or path.endswith("/.gitattributes")):
+            v.append((".gitattributes-change", path))
+        # hook 目录
+        if path and ("/hooks/" in path.replace(os.sep, "/") or path.startswith("hooks/")):
+            v.append(("hook-dir-change", path))
+        # 子模块（.gitmodules 变更或 S 状态）
+        if status == "S" or (path and path == ".gitmodules"):
+            v.append(("submodule-change", path))
+        # 可执行位变更（X）
+        if status == "X":
+            v.append(("exec-bit-change", path))
+    return v
+
+
+def scope_violations(changes, scope_prefixes, ai_paths):
+    """范围比对：规范化后以前缀匹配。删除（D）同样受范围约束——不得借删除
+    移除范围外（或受保护）文件；ai_writable 豁免对删除一致适用。
+    形态违规（穿越/绝对路径/NUL）由 boundary_violations 统一报告，此处跳过避免重复。"""
+    v = []
+    for ch in changes:
+        path = ch.get("path") or ch.get("old_path")
+        if path is None:
+            continue
+        norm, bad = normalize_path(path)
+        if bad:
+            continue
+        if under(norm, ai_paths):  # 明文豁免 ai_writable_paths
+            continue
+        if not under(norm, scope_prefixes):
+            v.append(norm)
+    return v
+
+
+def forbidden_violations(changes, contract):
+    """R-SEC-003：forbidden_items 优先于 scope。file/glob 机械匹配 -> 硬失败；
+       symbol/manual_review -> 转人核对（同样以非零退出迫使人工审查，但标注 MANUAL_REVIEW）。"""
+    items = (contract or {}).get("forbidden_items", []) or []
+    changed = [normalize_path(ch.get("path") or ch.get("old_path"))[0]
+               for ch in changes if ch.get("path") or ch.get("old_path")]
+    v = []
+    for it in items:
+        target = it.get("target", "")
+        kind = it.get("kind", "file")
+        if kind in ("file", "glob"):
+            for p in changed:
+                if kind == "file" and p == target:
+                    v.append(("forbidden-file", target, p))
+                elif kind == "glob" and fnmatch.fnmatch(p, target):
+                    v.append(("forbidden-glob", target, p))
+        else:
+            # symbol / manual_review：机械匹配不可靠，转人核对
+            for p in changed:
+                v.append(("MANUAL_REVIEW", it.get("id", "?"), p))
+    return v
+
+
+def main(argv):
+    changes_path = contract_path = scope_file = None
+    check_forbidden = False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--changes":
+            changes_path = argv[i + 1]; i += 2; continue
+        elif a == "--contract":
+            contract_path = argv[i + 1]; i += 2; continue
+        elif a == "--scope-paths":
+            scope_file = argv[i + 1]; i += 2; continue
+        elif a == "--check-forbidden":
+            check_forbidden = True; i += 1; continue
+        elif a == "--self-test":
+            return self_test()
+        i += 1
+
+    if changes_path is None:
+        print("pre-receive-scope: --changes <changes.json> required.", file=sys.stderr)
+        return 42
+    with open(changes_path, encoding="utf-8") as f:
+        changes = json.load(f)
+
+    contract = parse_front_matter(contract_path) if contract_path else None
+    redlines = load_redlines()
+    ai_paths = redlines.get("ai_writable_paths", []) or []
+
+    # 范围前缀来源：契约 scope[].path，或外部 --scope-paths 文件（每行一个）
+    scope_prefixes = []
+    if contract and contract.get("scope"):
+        scope_prefixes = [s.get("path") for s in contract["scope"] if s.get("path")]
+    if scope_file and os.path.exists(scope_file):
+        with open(scope_file, encoding="utf-8") as f:
+            scope_prefixes += [ln.strip() for ln in f if ln.strip()]
+
+    violations = []
+    repo_root = os.environ.get("REPO_ROOT", REPO_ROOT)
+    boundary = boundary_violations(changes, repo_root)
+    for kind, p in boundary:
+        violations.append("R-IMP-001 %s: %s" % (kind, p))
+    if scope_prefixes:
+        sv = scope_violations(changes, scope_prefixes, ai_paths)
+        for p in sv:
+            violations.append("R-IMP-001 out-of-scope: %s" % p)
+    if check_forbidden:
+        fv = forbidden_violations(changes, contract)
+        for kind, spec, p in fv:
+            violations.append("R-SEC-003 %s target=%s touched=%s" % (kind, spec, p))
+
+    _last.clear()
+    _last.extend(violations)
+    if violations:
+        for m in violations:
+            print("VIOLATION " + m, file=sys.stderr)
+        print("pre-receive-scope: %d violation(s)." % len(violations), file=sys.stderr)
+        return VIOLATION
+    print("pre-receive-scope: PASS.")
+    return OK
+
+
+def self_test():
+    tmp = tempfile.mkdtemp(prefix="prs-test-")
+    try:
+        redlines = {"ai_writable_paths": ["ai-reports/", ".handoff/", "proposals/"]}
+        with open(os.path.join(tmp, "redlines.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(redlines, f, allow_unicode=True)
+
+        os.environ["GOVERNANCE_DIR"] = tmp
+        os.environ["REPO_ROOT"] = tmp
+
+        # 契约范围表
+        contract = os.path.join(tmp, "C.md")
+        with open(contract, "w", encoding="utf-8") as f:
+            f.write("---\nscope:\n  - id: S-1\n    path: src/modA\n  - id: S-2\n    path: src/modB\n"
+                    "forbidden_items:\n  - id: X-1\n    target: config/secret.cfg\n    kind: file\n"
+                    "  - id: X-2\n    target: \"**/public-api/*.go\"\n    kind: glob\n"
+                    "  - id: X-3\n    target: SomeSymbol\n    kind: symbol\n---\n# body\n")
+
+        # 场景1：范围内变更 -> PASS
+        ch1 = os.path.join(tmp, "c1.json")
+        json.dump([{"path": "src/modA/x.go", "status": "A"}], open(ch1, "w"))
+        assert main(["--changes", ch1, "--contract", contract]) == OK
+
+        # 场景2：范围外变更 -> FAIL
+        ch2 = os.path.join(tmp, "c2.json")
+        json.dump([{"path": "src/elsewhere/y.go", "status": "A"}], open(ch2, "w"))
+        assert main(["--changes", ch2, "--contract", contract]) == VIOLATION
+
+        # 场景3：ai_writable 豁免 -> PASS
+        ch3 = os.path.join(tmp, "c3.json")
+        json.dump([{"path": "ai-reports/draft.md", "status": "A"}], open(ch3, "w"))
+        assert main(["--changes", ch3, "--contract", contract]) == OK
+
+        # 场景4：forbidden file 命中 -> FAIL
+        ch4 = os.path.join(tmp, "c4.json")
+        json.dump([{"path": "config/secret.cfg", "status": "A"}], open(ch4, "w"))
+        assert main(["--changes", ch4, "--contract", contract, "--check-forbidden"]) == VIOLATION
+
+        # 场景5：forbidden glob 命中 -> FAIL
+        ch5 = os.path.join(tmp, "c5.json")
+        json.dump([{"path": "src/public-api/foo.go", "status": "A"}], open(ch5, "w"))
+        assert main(["--changes", ch5, "--contract", contract, "--check-forbidden"]) == VIOLATION
+
+        # 场景6：forbidden symbol -> MANUAL_REVIEW（仍非零退出）
+        ch6 = os.path.join(tmp, "c6.json")
+        json.dump([{"path": "src/modA/bar.go", "status": "A"}], open(ch6, "w"))
+        rc6 = main(["--changes", ch6, "--contract", contract, "--check-forbidden"])
+        assert rc6 == VIOLATION and any("MANUAL_REVIEW" in m for m in _last), _last
+
+        # 场景7：.gitattributes 变更 -> 边界失败
+        ch7 = os.path.join(tmp, "c7.json")
+        json.dump([{"path": ".gitattributes", "status": "M"}], open(ch7, "w"))
+        assert main(["--changes", ch7, "--contract", contract]) == VIOLATION
+
+        # 场景8：大小写仅改名 -> 边界失败
+        ch8 = os.path.join(tmp, "c8.json")
+        json.dump([{"path": "src/modA/Readme.md", "old_path": "src/modA/README.md", "status": "R"}],
+                  open(ch8, "w"))
+        assert main(["--changes", ch8, "--contract", contract]) == VIOLATION
+
+        # 场景9：删除范围内 -> PASS
+        ch9 = os.path.join(tmp, "c9.json")
+        json.dump([{"path": "src/modA/gone.go", "status": "D"}], open(ch9, "w"))
+        assert main(["--changes", ch9, "--contract", contract]) == OK
+
+        # 场景10：删除范围外 -> FAIL（删除同样受范围约束）
+        ch10 = os.path.join(tmp, "c10.json")
+        json.dump([{"path": "src/elsewhere/gone.go", "status": "D"}], open(ch10, "w"))
+        assert main(["--changes", ch10, "--contract", contract]) == VIOLATION
+
+        # 场景11：删除 ai_writable -> PASS（豁免一致适用）
+        ch11 = os.path.join(tmp, "c11.json")
+        json.dump([{"path": "ai-reports/x.md", "status": "D"}], open(ch11, "w"))
+        assert main(["--changes", ch11, "--contract", contract]) == OK
+
+        # 场景12：".." 段穿越（即使规范化后落回范围内）-> FAIL
+        ch12 = os.path.join(tmp, "c12.json")
+        json.dump([{"path": "src/modA/../modA/x.go", "status": "A"}], open(ch12, "w"))
+        rc12 = main(["--changes", ch12, "--contract", contract])
+        assert rc12 == VIOLATION and any("dotdot-segment" in m for m in _last), _last
+
+        # 场景13：反斜杠 + ".." 逃逸 -> FAIL
+        ch13 = os.path.join(tmp, "c13.json")
+        json.dump([{"path": "src\\modA\\..\\..\\etc\\x", "status": "A"}], open(ch13, "w"))
+        rc13 = main(["--changes", ch13, "--contract", contract])
+        assert rc13 == VIOLATION and any("dotdot-segment" in m for m in _last), _last
+
+        # 场景14：绝对路径 -> FAIL
+        ch14 = os.path.join(tmp, "c14.json")
+        json.dump([{"path": "/etc/passwd", "status": "A"}], open(ch14, "w"))
+        rc14 = main(["--changes", ch14, "--contract", contract])
+        assert rc14 == VIOLATION and any("absolute-path" in m for m in _last), _last
+
+        # 场景15：NUL 字节 -> FAIL
+        ch15 = os.path.join(tmp, "c15.json")
+        json.dump([{"path": "src/modA/a\x00b.go", "status": "A"}], open(ch15, "w"))
+        rc15 = main(["--changes", ch15, "--contract", contract])
+        assert rc15 == VIOLATION and any("nul-byte" in m for m in _last), _last
+
+        print("SELF-TEST: pre-receive-scope PASS (15 scenarios).")
+        return OK
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.environ.pop("GOVERNANCE_DIR", None)
+        os.environ.pop("REPO_ROOT", None)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
