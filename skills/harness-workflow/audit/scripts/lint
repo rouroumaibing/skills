@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""lint —— R-IMP-005 实装（合入必需检查；非 --dry-run）。
+
+服务规则 R-IMP-005：代码风格符合项目约定（命令退出码）。
+
+真实实现：本入口仅调用治理自带且钉死的配置目录下的项目 linter（ruff / eslint），
+不读取项目根可能被 AI 改动的 lint 配置（防"空转"）。
+接线方式：
+  1) 在 governance/ 下放置钉死的 lint 配置（如 governance/lint/ruff.toml）；
+  2) 在 governance/lint.env 声明 LINTER=ruff（或 eslint）与额外参数；
+  3) 本脚本据此调用，未接线时退出 42（fail-closed：未实装不得放行）。
+
+用法：
+  lint [--config <path>] [--self-test]
+未接线 -> 退出 42；接线 -> 转发 linter 退出码。
+"""
+import os
+import sys
+import subprocess
+import shutil
+
+GOVERNANCE_DIR = os.environ.get("GOVERNANCE_DIR",
+                                os.path.dirname(os.path.abspath(__file__)).rstrip("/") + "/..")
+NOT_WIRED = 42
+
+
+def resolve():
+    env = os.path.join(GOVERNANCE_DIR, "lint.env")
+    cfg = os.path.join(GOVERNANCE_DIR, "lint")
+    linter = extra = None
+    if os.path.exists(env):
+        for ln in open(env, encoding="utf-8"):
+            ln = ln.strip()
+            if ln.startswith("LINTER="):
+                linter = ln.split("=", 1)[1].strip()
+            elif ln.startswith("EXTRA="):
+                extra = ln.split("=", 1)[1].strip()
+    # 自动探测自带配置
+    conf = None
+    if os.path.isdir(cfg):
+        for cand in ("ruff.toml", "ruff.toml", ".ruff.toml", "eslint.config.js", ".eslintrc.json"):
+            if os.path.exists(os.path.join(cfg, cand)):
+                conf = os.path.join(cfg, cand); break
+    return linter, extra, conf
+
+
+def main(argv):
+    if "--self-test" in argv:
+        linter, extra, conf = resolve()
+        if linter is None or conf is None:
+            print("SELF-TEST: lint not wired (no governance/lint.env + governance/lint config). "
+                  "Exit 42 = not implemented; wire before enabling as required check.", file=sys.stderr)
+            return NOT_WIRED
+        print("SELF-TEST: lint wired: linter=%s conf=%s" % (linter, conf))
+        return 0
+
+    linter, extra, conf = resolve()
+    if linter is None or conf is None:
+        print("lint: not wired. Place governance/lint.env (LINTER=ruff|eslint) and a pinned "
+              "config under governance/lint/. Exit 42 = not implemented.", file=sys.stderr)
+        return NOT_WIRED
+    binpath = shutil.which(linter)
+    if binpath is None:
+        print("lint: linter binary %r not found on PATH." % linter, file=sys.stderr)
+        return NOT_WIRED
+    cmd = [binpath, "--config", conf]
+    if extra:
+        cmd += extra.split()
+    r = subprocess.run(cmd, cwd=os.environ.get("REPO_ROOT", os.getcwd()))
+    return r.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

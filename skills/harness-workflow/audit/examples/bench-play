@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""bench-play —— 示例度量入口（R-GOAL 类自动判据的度量程序范例）。
+
+这是"度量程序只能调用 governance/ 与 audit/ 下入口"的范例命令（见 schemas.md §1.1）。
+真实项目应替换为自己的起播耗时探针，独占发射：
+    METRIC|p95=<实测>;unit=ms samples=<n>
+且 unit 须与契约判据的 unit 一致（ms 不可与 s 混淆）。
+
+--demo：发射一条示例 METRIC（仅用于格式自测），退出 0。
+无 --demo 且无真实探测实现 -> 退出 42（未实装真实探测）。
+"""
+import sys
+
+METRIC = "p95"
+
+
+def emit_demo():
+    print("METRIC|%s=2870;unit=ms samples=500" % METRIC)
+    return 0
+
+
+def main(argv):
+    if "--demo" in argv:
+        return emit_demo()
+    print("bench-play: replace with your real startup-latency probe that emits "
+          "'METRIC|%s=<measured>;unit=ms samples=<n>'. Exit 42 = not implemented." % METRIC,
+          file=sys.stderr)
+    return 42
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

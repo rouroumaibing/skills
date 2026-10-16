@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+"""test-upload —— 示例度量入口（R-GOAL 类自动判据的度量程序范例）。
+
+这是"度量程序只能调用 governance/ 与 audit/ 下入口"的范例命令（见 schemas.md §1.1）。
+真实项目应替换为自己的上传成功率探针，独占发射：
+    METRIC|success_rate=<实测>;unit=percent samples=<n>
+且 unit 须与契约判据的 unit 一致（% 不可与比率小数混淆）。
+
+--demo：发射一条示例 METRIC（仅用于格式自测），退出 0。
+无 --demo 且无真实探测实现 -> 退出 42（未实装真实探测）。
+"""
+import sys
+
+METRIC = "success_rate"
+
+
+def emit_demo():
+    # 示例实测值，仅演示格式；真实实现应替换为被测结果
+    print("METRIC|%s=99.2;unit=percent samples=1200" % METRIC)
+    return 0
+
+
+def main(argv):
+    if "--demo" in argv:
+        return emit_demo()
+    print("test-upload: replace with your real upload-success probe that emits "
+          "'METRIC|%s=<measured>;unit=percent samples=<n>'. Exit 42 = not implemented." % METRIC,
+          file=sys.stderr)
+    return 42
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
