@@ -1,0 +1,11 @@
+{
+  "commit": "c0ffee1",
+  "steps": {
+    "type-check": "pass",
+    "dep-secret-scan": "pass"
+  },
+  "metrics": {
+    "coverage": 87,
+    "mutation_score": 71
+  }
+}

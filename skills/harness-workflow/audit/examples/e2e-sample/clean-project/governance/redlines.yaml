@@ -1,0 +1,36 @@
+schema_version: 1
+forbidden_words: [适当, 尽量, 等等, 大概, 合理, 关键, 重要, 必要时]
+risk_patterns:
+  - path_glob: "**/auth/**"
+  - path_glob: "**/payment/**"
+  - path_glob: "**/migration/**"
+  - path_glob: "**/secrets/**"
+  - pattern: '\b(GRANT|REVOKE)\b'
+    skip_paths: &not_prose ["**/*.md", "**/*.txt", "**/*.rst"]
+  - pattern: '\b(ALTER|DROP)\s+TABLE\b|\bTRUNCATE\b'
+    skip_paths: *not_prose
+  - pattern: '\bDELETE\s+FROM\b'
+    skip_paths: *not_prose
+ai_writable_paths:
+  - "ai-reports/"
+thresholds:
+  ai_writable_max_bytes: 65536
+  coverage: 80
+  mutation_score: 60
+# 采纳边界：只有这里列出的登记规则才是本项目的审计判据
+required_rules:
+  - id: R-GOAL-001
+    mechanism: script
+    script: ci/check-contract.sh
+  - id: R-GOAL-002
+    mechanism: script
+    script: ci/check-contract.sh
+  - id: R-IMP-001
+    mechanism: script
+    script: ci/scope-gate.sh
+  - id: R-RISK-001
+    mechanism: script
+    script: ci/risk-floor.sh
+  - id: R-VER-006
+    mechanism: ci
+    ci_step: type-check

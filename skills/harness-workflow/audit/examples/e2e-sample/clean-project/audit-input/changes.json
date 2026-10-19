@@ -1,0 +1,14 @@
+[
+  {
+    "path": "src/upload/handler.py",
+    "status": "M"
+  },
+  {
+    "path": "tests/test_upload.py",
+    "status": "A"
+  },
+  {
+    "path": "ai-reports/notes.md",
+    "status": "A"
+  }
+]

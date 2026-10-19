@@ -6,6 +6,9 @@
 合入前校验 ai_writable_paths 下新增/修改文件符合上述约束；其余路径不在本脚本职责内
 （服务端权限由项目自建保证——设计要点 R-SEC-001 见 references/attack-cases.md；R-IMP-001 由范围检查负责）。
 
+`ai_writable_paths` 是**目录前缀**（如 `ai-reports/`、`docs/`）而非 glob——出现
+`* ? [` 元字符时脚本打 WARNING 且该项什么都匹配不到（见 warn_glob_prefixes）。
+
 用法：
   check-ai-writable.py --changes <changes.json> [--repo <path>] [--self-test]
   check-ai-writable.py --self-test
@@ -36,6 +39,18 @@ REDLINES = os.path.join(GOVERNANCE_DIR, "redlines.yaml")
 ALLOWED_EXT = {".md", ".json", ".yaml", ".yml", ".txt", ".csv"}
 VIOLATION = 1
 OK = 0
+# v13：匹配按目录前缀（见 under()），glob 元字符不会按 glob 解释——出现即提示，
+# 避免把 "docs/**" 当成"匹配 docs/ 下所有文件"而实际什么都不匹配（漏检）。
+GLOB_CHARS = set("*?[")
+
+
+def warn_glob_prefixes(paths):
+    for pref in (paths or []):
+        if any(c in pref for c in GLOB_CHARS):
+            print("check-ai-writable: WARNING ai_writable_paths entry %r contains glob "
+                  "metachar(s); matching is by DIRECTORY PREFIX, not glob — '%s' will "
+                  "match nothing (use e.g. 'docs/' to allow the docs/ directory)."
+                  % (pref, pref), file=sys.stderr)
 
 # 校验结果（全局，便于 self-test 断言）
 _last_violations = []
@@ -119,12 +134,14 @@ def main(argv):
 
     redlines = load_redlines()
     ai_paths = redlines.get("ai_writable_paths", []) or []
+    warn_glob_prefixes(ai_paths)
     limit = max_bytes(redlines)
 
     with open(changes_path, encoding="utf-8") as f:
         changes = json.load(f)
 
     violations = []
+    checked = 0
     for ch in changes:
         status = ch.get("status")
         if status in ("D",):
@@ -134,6 +151,7 @@ def main(argv):
             continue
         if not under(path, ai_paths):
             continue  # 非 ai_writable 区域交给 R-IMP-001 / 服务端权限（设计要点 R-SEC-001）
+        checked += 1
         vs = check_file(repo, path, limit)
         if vs:
             violations.append((path, vs))
@@ -146,7 +164,7 @@ def main(argv):
             print("VIOLATION[R-SEC-004] %s: %s" % (path, ", ".join(vs)), file=sys.stderr)
         print("check-ai-writable: %d violation(s)." % len(violations), file=sys.stderr)
         return VIOLATION
-    print("check-ai-writable: PASS (%d ai_writable files checked)." % len(changes))
+    print("check-ai-writable: PASS (%d ai_writable files checked)." % checked)
     return OK
 
 

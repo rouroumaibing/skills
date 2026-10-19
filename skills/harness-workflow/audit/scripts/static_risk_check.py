@@ -5,8 +5,10 @@ r"""static_risk_check.py —— R-IMP-004 实装（合入必需检查）+ R-IMP-
   1. 跳过标记：pytest.mark.skip/skipif/xfail、pytest.skip()、t.Skip、it/describe.skip、
      xit/xdescribe/xcontext、@Disabled、@Ignore（java/kotlin）、[Ignore（C#）、
      #[ignore（rust）、unittest.skip 等（新增跳过标记一律违规——删除标记不算）；
-  2. 吞异常的空捕获：except ...: pass（含 except Exception: / except E as e: 等所有
-     python 形态）、catch (...) {} 等（正则保守，复杂形态靠人审）；
+  2. 吞异常的空捕获：except ...: pass / ...（单行 + 相邻两行形态——black/ruff
+   格式化会把单行拆成两行，v12 起两行形态可检出）、contextlib.suppress(...)、
+     catch (...) {} 等。except 头与空体之间可夹至多一行注释（新增或上下文注释，
+     v13 起统一为检出，方向保守）；
   3. 空断言凑数：assert True / assertTrue(true) / expect(true).toBe(true) 等
      （对应 R-IMP-003"禁止以空断言凑数"；该条的测试数量/覆盖率部分需 CI，见 ci_gate_check）。
 
@@ -29,9 +31,11 @@ diff 解析（fail-closed，v10 加固）：
     （证据不完整，fail-closed；不得对未覆盖的变更报 PASS）。
 
 已知盲区（报告须注明"机器推算仅供参考，需人审"）：
-  - 多行空 catch（catch 头与空体跨行且夹注释）仅保守识别常见单行形态；
-  - 动态构造的跳过（如 mark.skipif 条件为真值变量）不识别；RSpec pending、
-    自研测试框架的自定义跳过 DSL 不识别——后者请用 static_risk_extra_rules 补。
+  - 多行空 catch：仅识别"except 头行 + 相邻空体行（pass/...），或头体间夹至多
+    一行注释"；头与体之间夹**两行及以上**注释/代码、或空体为真正业务代码不识别；
+  - 动态构造的跳过（如 mark.skipif 条件为真值变量）、RSpec skip/pending、
+    go `if err != nil {}` 空分支、`assert x or True` 类恒真表达不识别——
+    自研框架的自定义跳过 DSL 请用 static_risk_extra_rules 补。
 
 退出码：0 通过 / 1 发现违规（阻断级）/ 42 未接线（判据文件损坏、diff 未覆盖
 changes 列出的文件等 fail-closed）。
@@ -44,6 +48,7 @@ changes 列出的文件等 fail-closed）。
 import os
 import sys
 import io
+import contextlib
 import json
 import re
 import difflib
@@ -74,10 +79,19 @@ SKIP_MARKS = [
     (r"\btdd_skip\b|\bunittest\.skip\b|@unittest\.skip", "python unittest skip"),
 ]
 EMPTY_CATCH = [
-    # 覆盖裸 except:、except E:、except (A, B):、except E as e: 等全部单行形态
-    (r"\bexcept\b[^:#\n]*:\s*pass\b", "python empty except: pass"),
+    # 单行形态：裸 except:、except E:、except (A, B):、except E as e:，
+    # 空体为 pass 或 Ellipsis（...）
+    (r"\bexcept\b[^:#\n]*:\s*(?:pass\b|\.\.\.)", "python empty except (same line)"),
     (r"catch\s*\([^)]*\)\s*\{\s*\}", "js/java/kotlin/c# empty catch block"),
+    (r"\bcontextlib\.suppress\s*\(", "python contextlib.suppress (exception swallowed)"),
+    (r"\bwith\s+suppress\s*\(", "python suppress() (exception swallowed)"),
 ]
+# v12：相邻两行空 catch（black/ruff 格式化会把 `except X: pass` 拆成两行）。
+# EXCEPT_HEADER 匹配"以冒号收尾的 except 头"（可带尾注释）；BARE_NOOP_BODY 匹配
+# 空体行（pass / ...，可带尾注释）。两行在新增行序列中相邻即报（夹注释行的
+# 形态仍属盲区，见 docstring）。
+EXCEPT_HEADER = re.compile(r"^\s*except\b[^:#]*:\s*(#.*)?$")
+BARE_NOOP_BODY = re.compile(r"^\s*(?:pass|\.\.\.)\s*(#.*)?$")
 EMPTY_ASSERT = [
     # 恒真断言（凑数）：assert True / assert 1 须到行尾（否则 assert 1 == 1 是合法断言）；
     # assert 0 / assert False 是 fail-fast 惯用法，不算凑数
@@ -134,13 +148,16 @@ def _norm_git_path(raw):
 
 
 def _diff_added(diff_text):
-    """按文件头归因 diff 新增行；返回 ({path: [added_line, ...]}, {seen_paths})。
+    """按文件头归因 diff 新增行；返回 (by_file, seen_paths, seq_by_file)。
 
+    by_file: {path: [added_line, ...]}（仅新增行，供单行正则扫描）
+    seq_by_file: {path: [(is_added, text), ...]}（hunk 内新增/上下文行的有序序列，
+      供多行空 catch 检测——上下文行 is_added=False，可跨注释行配对）
     头判定只在 hunk 外进行（防内容行劫持）："diff --git" 开启文件节；"--- " 置
     头期待；"+++ " 在 hunk 外一律按文件头处理；hunk 内 "+" 开头的行全部是新增
     内容——即使内容以 "++" 开头也不再被误当文件头。
     """
-    by_file, seen = {}, set()
+    by_file, seen, seq_by_file = {}, set(), {}
     cur = None
     in_hunk = False
     for line in diff_text.splitlines():
@@ -174,8 +191,19 @@ def _diff_added(diff_text):
                     seen.add(p)
             continue
         if cur and line.startswith("+"):
-            by_file.setdefault(cur, []).append(line[1:])
-    return by_file, seen
+            body = line[1:]
+            by_file.setdefault(cur, []).append(body)
+            seq_by_file.setdefault(cur, []).append((True, body))
+        elif cur and (line.startswith(" ") or line.startswith("\t")):
+            # 上下文行：记入序列供多行空 catch 配对，但不扫内容模式
+            seq_by_file.setdefault(cur, []).append((False, line[1:]))
+    return by_file, seen, seq_by_file
+
+
+def _is_comment(text):
+    """新增/上下文行是否为注释行（python/js/ts/rust/c#/go 常见注释前缀）。"""
+    s = text.strip()
+    return s.startswith("#") or s.startswith("//")
 
 
 def _load_rules(path, key):
@@ -212,6 +240,12 @@ def _load_rules(path, key):
             print("static_risk_check: invalid regex in %s %r (%s); treat as "
                   "NOT-WIRED." % (key, a, e), file=sys.stderr)
             sys.exit(42)
+        if out[-1].search(""):
+            # v12：能匹配空串的正则必然命中每一行（search 语义）——豁免 = 全豁免、
+            # 追加规则 = 全违规。不改变退出码，但必须让使用者在输出里看见。
+            print("static_risk_check: WARNING pattern %r in %s matches the empty "
+                  "string and therefore matches EVERY added line; confirm this is "
+                  "intended (human review per E-06)." % (a, key), file=sys.stderr)
     return data, out
 
 
@@ -234,7 +268,7 @@ def scan(changes, diff_text, allowlist=(), extra=()):
     调用方应据此退出 42（证据不完整，fail-closed）。
     """
     findings = []
-    by_file, seen = _diff_added(diff_text)
+    by_file, seen, seq_by_file = _diff_added(diff_text)
     for ch in (changes or []):
         p = ch.get("path", "") if isinstance(ch, dict) else ""
         if not p:
@@ -243,7 +277,8 @@ def scan(changes, diff_text, allowlist=(), extra=()):
             continue  # 无归属：不计发现，交由 uncovered 上报
         if p.lower().endswith(PROSE_EXT):
             continue  # 散文豁免（与 risk_floor_check 同口径），文件仍算已覆盖
-        for i, ln in enumerate(by_file.get(p, []), 1):
+        lines = by_file.get(p, [])
+        for i, ln in enumerate(lines, 1):
             if any(rx.search(ln) for rx in allowlist):
                 continue
             for kind, rx, why in COMPILED:
@@ -256,6 +291,35 @@ def scan(changes, diff_text, allowlist=(), extra=()):
                     if rx.search(ln):
                         findings.append(("project-rule", str(rx.pattern), p, i, ln.strip()))
                         break
+        # v13：相邻两行空 catch（except 头行 + pass/... 空体行），且头体间可夹至多
+        # 一行注释（新增或上下文，方向对齐为保守：检出）。单行正则对 black/ruff
+        # 拆两行的形态失效，这里补上；注释行不计入独立单测盲区。
+        seq = seq_by_file.get(p, [])
+        nseq = len(seq)
+        i = 0
+        while i < nseq:
+            a0, t0 = seq[i]
+            if a0 and EXCEPT_HEADER.search(t0):
+                body = None
+                if i + 1 < nseq:
+                    a1, t1 = seq[i + 1]
+                    if _is_comment(t1):                      # 头体间夹一行注释（新增或上下文）
+                        if i + 2 < nseq and seq[i + 2][0] \
+                                and BARE_NOOP_BODY.search(seq[i + 2][1]):
+                            body = i + 2
+                    elif a1 and BARE_NOOP_BODY.search(t1):   # 紧邻空体行
+                        body = i + 1
+                if body is not None:
+                    if any(rx.search(t0) or rx.search(seq[body][1])
+                           for rx in allowlist):
+                        i = body + 1
+                        continue
+                    findings.append(("empty-catch", "python empty except (two-line form)",
+                                     p, i + 1,
+                                     (t0.strip() + " / … / " + seq[body][1].strip())[:120]))
+                    i = body + 1
+                    continue
+            i += 1
     _last.clear()
     _last.extend(findings)
     uncovered = sorted({ch.get("path") for ch in (changes or [])
@@ -515,7 +579,71 @@ def self_test():
         assert ("b.js", 1) in kinds and all(p == "b.js" for p, _ in kinds), \
             "finding must be attributed to b.js only: %s" % kinds
 
-        print("SELF-TEST: static_risk_check.py PASS (26 scenarios + 4 sub-asserts).")
+        # ---- v12：多行空 catch / suppress / 全豁免警告 ----
+        # 场景27：except X: 换行 pass（black/ruff 格式化形态）-> 违规
+        rc27 = run(chg("c27.json", [{"path": "p.py", "status": "M"}]),
+                   wr("d27.txt", hdr("p.py") + "+try:\n+    risky()\n"
+                      "+except Exception:\n+    pass\n"))
+        assert rc27 == VIOLATION, \
+            "expected VIOLATION (two-line empty except), got %d" % rc27
+
+        # 场景28：except X: 换行 ...（Ellipsis 空体）-> 违规
+        rc28 = run(chg("c28.json", [{"path": "p.py", "status": "M"}]),
+                   wr("d28.txt", hdr("p.py") + "+except ValueError:\n+    ...\n"))
+        assert rc28 == VIOLATION, \
+            "expected VIOLATION (two-line ellipsis body), got %d" % rc28
+
+        # 场景29：contextlib.suppress / with suppress -> 违规
+        for snip in ("+with contextlib.suppress(Exception):\n+    risky()\n",
+                     "+from contextlib import suppress\n"
+                     "+with suppress(OSError):\n+    risky()\n"):
+            d29 = wr("d29.txt", hdr("p.py") + snip)
+            rc29 = run(chg("c29.json", [{"path": "p.py", "status": "M"}]), d29)
+            assert rc29 == VIOLATION, \
+                "expected VIOLATION (suppress), got %d" % rc29
+
+        # 场景30：except 头与空体夹【新增】注释行 -> 检出（v13 对齐保守方向）
+        rc30 = run(chg("c30.json", [{"path": "p.py", "status": "M"}]),
+                   wr("d30.txt", hdr("p.py") + "+except Exception:\n"
+                      "+    # TODO: handle\n+    pass\n"))
+        assert rc30 == VIOLATION, \
+            "expected VIOLATION (added comment between, v13), got %d" % rc30
+
+        # 场景30b：except 头与空体夹【上下文】注释行 -> 同样检出（方向对齐）
+        rc30b = run(chg("c30b.json", [{"path": "p.py", "status": "M"}]),
+                    wr("d30b.txt", hdr("p.py") + "@@ -1,3 +1,4 @@\n"
+                       "+except Exception:\n     # todo\n+    pass\n"))
+        assert rc30b == VIOLATION, \
+            "expected VIOLATION (context comment between, v13), got %d" % rc30b
+
+        # 场景30c：注释后跟真实业务体 -> 不误报（非空 catch）
+        rc30c = run(chg("c30c.json", [{"path": "p.py", "status": "M"}]),
+                    wr("d30c.txt", hdr("p.py") + "+except Exception:\n"
+                       "+    # cleanup\n+    cleanup()\n"))
+        assert rc30c == OK, \
+            "expected PASS (comment then real body, not empty catch), got %d" % rc30c
+
+        # 场景31：非空 except 体不误报
+        rc31 = run(chg("c31.json", [{"path": "p.py", "status": "M"}]),
+                   wr("d31.txt", hdr("p.py") + "+except Exception:\n+    cleanup()\n"))
+        assert rc31 == OK, "expected PASS (non-empty except body), got %d" % rc31
+
+        # 场景32：allowlist ['.*'] 全豁免 -> 豁免生效，但 stderr 必须有 WARNING
+        bd5 = os.path.join(tmp, "gov5")
+        os.makedirs(bd5, exist_ok=True)
+        with open(os.path.join(bd5, "redlines.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump({"static_risk_allowlist": [".*"]}, f)
+        os.environ["GOVERNANCE_DIR"] = bd5
+        err32 = io.StringIO()
+        with contextlib.redirect_stderr(err32):
+            rc32 = run(chg("c32.json", [{"path": "t.py", "status": "M"}]),
+                       wr("d32.txt", hdr("t.py") + "+it.skip('x')\n"))
+        assert rc32 == OK, "expected PASS (everything allowlisted), got %d" % rc32
+        assert "matches the empty string" in err32.getvalue(), \
+            "expected broad-allowlist WARNING on stderr: %r" % err32.getvalue()
+        os.environ.pop("GOVERNANCE_DIR", None)
+
+        print("SELF-TEST: static_risk_check.py PASS (34 scenarios + 4 sub-asserts).")
         return OK
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

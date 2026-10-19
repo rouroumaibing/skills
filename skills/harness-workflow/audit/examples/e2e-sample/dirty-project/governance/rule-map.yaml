@@ -1,0 +1,13 @@
+required_rules:
+  - id: R-GOAL-001
+    mechanism: script
+    script: ci/check-contract.sh
+  - id: R-GOAL-002
+    mechanism: script
+    script: ci/check-contract.sh
+  - id: R-IMP-001
+    mechanism: script
+    script: ci/scope-gate.sh
+  - id: R-RISK-001
+    mechanism: script
+    script: ci/risk-floor.sh

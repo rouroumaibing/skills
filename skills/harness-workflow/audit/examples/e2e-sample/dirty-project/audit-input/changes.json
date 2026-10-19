@@ -1,0 +1,22 @@
+[
+  {
+    "path": "src/upload/handler.py",
+    "status": "M"
+  },
+  {
+    "path": "src/auth/session.py",
+    "status": "M"
+  },
+  {
+    "path": "tests/test_upload.py",
+    "status": "M"
+  },
+  {
+    "path": "config/prod.env",
+    "status": "M"
+  },
+  {
+    "path": "ai-reports/run.sh",
+    "status": "A"
+  }
+]

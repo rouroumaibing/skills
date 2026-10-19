@@ -51,7 +51,10 @@ def check(root, scripts_dir=None):
         print("doc_consistency_check: root not found: %s" % root, file=sys.stderr)
         sys.exit(NOT_WIRED)
     mds = _md_files(root)
-    all_text = {p: _strip_fenced(open(p, encoding="utf-8").read()) for p in mds}
+    all_text = {}
+    for p in mds:
+        with open(p, encoding="utf-8") as f:
+            all_text[p] = _strip_fenced(f.read())
 
     # 1) 死链：md 内相对路径引用（markdown link + 反引号路径两种形态）
     for p, text in all_text.items():

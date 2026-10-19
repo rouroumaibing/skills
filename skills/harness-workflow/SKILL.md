@@ -3,7 +3,7 @@ name: harness-workflow
 description: "触发词：审计、审查、检查对否、artifact 校验、契约核查、证据核对、缺口清单、对抗推演、防 AI 虚报。| Audits work products against the goal contract and rule registry; emits an evidence-backed report with gaps, fix suggestions (each carrying an adversarial replay and credibility grade), and archive guidance. | 对产物对照契约与判据出具带证据的审计报告；修改建议逐条附对抗推演与可信度分级；支持有仓库与聊天两种模式。"
 metadata:
   agent_created: true
-  version: "11"
+  version: "13"
 ---
 
 # harness-workflow（审计 skill：产物 × 契约 × 判据 → 带证据的审计报告）
@@ -98,21 +98,25 @@ harness 从不编辑被审产物，也从不编辑其它 skill 的内部流程�
 > 「判据脚本（本包）」列互为镜像（此处按"检查器 → 规则"、彼处按"规则 → 脚本"），
 > 改动须同步两处。
 
-| 检查器 | 审什么 | 对应规则 |
-| --- | --- | --- |
-| `check_contract.py` | 契约：禁用词 / 哈希 / 已锁定 / 高风险批准人分离（`--check-approver` 需项目自建 `roles.yaml`：高风险下"已注册"半条缺失时退出 42 fail-closed，owner==approver 半条不受影响；`--check-locked` 需 `state.json`：缺失/损坏 = 无法证明已锁定 → 违反 exit 1，fail-closed） | R-GOAL-001/002、R-REL-003 |
-| `pre-receive-scope` | 改动是否越出契约范围；forbidden_items | R-IMP-001、R-SEC-003 |
-| `risk_floor_check.py` | 从 diff 推算风险下限（E-17）；需项目 `redlines.yaml` | R-RISK-001 |
-| `check-ai-writable.py` | AI 可写区内容合规（类型 / 体积 / symlink） | R-SEC-004 |
-| `evidence_pack_check.py` | 证据包完整性与绑定 | R-REL-002 |
-| `trace_check.py` | 追溯矩阵断链（需求↔设计↔代码↔测试） | R-DES-001、R-VER-005 |
-| `tdd_order_check.py` | 红绿顺序（测试先失败过）；**需 CI 接线**（读 CI 产出的红绿证据日志，无日志退出 42） | R-IMP-002 |
-| `static_risk_check.py` | diff 新增行中的跳过标记（skip/skipif/xfail、rust `#[ignore]`、C# `[Ignore]`、js/go/java 形态）、吞异常空 catch（含 `except Exception: pass` 全部 python 形态）、空断言凑数；**内置模式无需配置**（redlines.yaml 可选：`static_risk_allowlist` 豁免段 + `static_risk_extra_rules` 项目追加规则入口，损坏退出 42）；`*.md/*.txt/*.rst` 散文豁免（与 risk_floor_check 同口径）；diff 头兼容 noprefix / mnemonicPrefix / quotepath 八进制转义，hunk 内 `+` 开头行一律按内容扫（防伪文件头劫持）；changes 列出的文件在 diff 无归属 → 42 | R-IMP-004、R-IMP-003（空断言部分） |
-| `ci_gate_check.py` | CI 门禁报告：必需 step 全 pass（默认 type-check / dep-secret-scan，`ci_required_steps` 可追加）+ coverage / mutation_score 阈值（含 [0,100] 合理性区间，NaN/Infinity 拒收）+ `--commit` 提交绑定（陈旧/重放报告 → 1，报告缺 commit → 42）；**需 CI 接线**（报告缺失/损坏/必需 step 未跑退出 42） | R-VER-006/007、R-VER-001/002 |
-| `rule_map_check.py` | 规则映射台账：required_rules 逐条有映射、ID 与登记表对齐、无重复、机制可执行（**script 指针须真实存在于盘上**）、软规则不进必需清单、**与 redlines.yaml 的 required_rules 采纳清单双向一致**（强制未采纳 / 采纳无映射均违反）；**需项目自建 `rule-map.yaml`**（缺失/损坏退出 42） | R-PRC-006 |
-| `doc_consistency_check.py` | 文档一致性：死链（剥离 fenced code）、冲突/修订痕迹、孤儿脚本/孤儿文档；**内置判据无需配置** | R-PRC-007 |
-| `lint` | 代码风格（调项目 lint 入口）；**需项目接线**（`governance/lint.env` + 钉死配置，未接线退出 42） | R-IMP-005 |
-| `audit/examples/test-upload` / `bench-play` | 度量范例（METRIC\| 通道 + unit 绑定）；**演示脚本，非检查器**——示例入口，消费项目替换为自己的探针（见 `audit/examples/README.md`） | R-GOAL 度量约定 |
+| 检查器 | 查什么 | 对应规则 | 接线 / 退出码 |
+| --- | --- | --- | --- |
+| `check_contract.py` | 契约禁用词/哈希/已锁定/高风险批准人分离 | R-GOAL-001/002、R-REL-003 | 需 `roles.yaml`/`state.json`；0/1/42 |
+| `pre-receive-scope` | 改动越界/禁止项 | R-IMP-001、R-SEC-003 | `forbidden_items`；0/1 |
+| `risk_floor_check.py` | 风险下限推算（E-17） | R-RISK-001 | 需 `redlines.yaml`；0/1/42 |
+| `check-ai-writable.py` | AI 可写区类型/体积/symlink | R-SEC-004 | 目录前缀匹配（glob 写法告警）；0/1/42 |
+| `evidence_pack_check.py` | 证据包完整性绑定 | R-REL-002 | 内置；0/1 |
+| `trace_check.py` | 追溯矩阵断链 | R-DES-001、R-VER-005 | 内置；0/1 |
+| `tdd_order_check.py` | 红绿顺序（测试先失败） | R-IMP-002 | 需 CI 日志；无→42 |
+| `static_risk_check.py` | 新增行跳过标记/空catch/空断言 | R-IMP-004、R-IMP-003 | 内置模式无需配置；0/1/42 |
+| `ci_gate_check.py` | CI 门禁 step/阈值/commit绑定 | R-VER-006/007、R-VER-001/002 | 需 CI 接线；无→42 |
+| `rule_map_check.py` | 规则映射台账一致性 | R-PRC-006 | 需 `rule-map.yaml`；无→42 |
+| `doc_consistency_check.py` | 文档死链/冲突/孤儿 | R-PRC-007 | 内置判据无需配置；0/1 |
+| `lint` | 代码风格 | R-IMP-005 | 需 `governance/lint.env`；未接线→42 |
+| `examples/test-upload`/`bench-play` | 度量范例（演示，非检查器） | R-GOAL 度量约定 | — |
+
+> 各检查器的退出码细节、豁免 / 警告 / 盲区、匹配语义与配置有效性校验 → 见
+> `audit/scripts/README.md`（与 `references/rule-registry.md` 的「判据脚本
+> （本包）」列互为镜像，改动须同步两处）。
 
 > **判据来源**：检查器读取被审项目的机器配置——设 `GOVERNANCE_DIR` 指向
 > 项目根下的 `governance/`，其中的 `redlines.yaml` 提供
@@ -125,33 +129,8 @@ harness 从不编辑被审产物，也从不编辑其它 skill 的内部流程�
 > 同意后再写入项目。拒绝或暂缓 → 继续软审，报告中注明
 > "无机器判据来源，该项为人工核对"。
 >
-> **匹配语义与盲区**（报告须注明"机器推算仅供参考"）：path_glob 支持 `**` 跨段、
-> 大小写不敏感，尾部 `**` 为目录语义（`**/auth/**` 不命中名为 auth 的文件）；
-> 内容模式只扫 diff 新增行，路径范围用 `skip_paths` 黑名单（只按散文扩展名跳过
-> `*.md`/`*.txt`/`*.rst`、**其余文件全扫**——白名单会漏检未列入的扩展名，
-> 按目录名跳过会让 docs/ 下的代码与配置文件成为绕过口）或 `only_paths` 白名单
-> （`path_glob` 附在 pattern 上属旧写法，仍兼容）；diff 无文件头时保守全扫。
-> 相邻新增行拼接折叠空白后扫描：单行内 "DROP   TABLE" 与跨行拆分
-> （"+DROP" 下一行 "+TABLE x"）可检出；拼接只限相邻行，隔上下文/删除行不拼。
-> 已知盲区（正则不可检出，靠人审）：字符串/标识符拼接（'DR'+'OP TABLE'）、
-> 运行时动态构造 SQL、相邻新增行之间夹注释行（注释文本把两个半句隔开）。
-> starter 已含 `DELETE FROM` 默认规则（宁误报，命中后由人核 WHERE）。
-> 路径范围与规则集由项目在 `risk_patterns` 按实际语言调整。
->
-> **配置有效性校验**（"没有规则被评估" ≠ "PASS"）：`redlines.yaml` 语法合法但
-> 零有效规则——缺 `risk_patterns` 键、空列表、写成字符串、条目缺 `pattern` 与
-> `path_glob`、**键存在但值无效**（`pattern` 空/非字符串/纯空白，`path_glob` 空/
-> 非字符串或空列表）、仅有 `skip_paths`/`only_paths` 的范围条目（缺主体字段，
-> 评估不了任何东西）、空文件、非法正则——一律退出 42 并注明"风险下限未评估"；
-> 无法识别的条目键名打警告（含近似键名提示，如 `patern` → `pattern`、
-> `only_path` → `only_paths`，警告不改变退出码）。纯 `path_glob` 配置
-> 是合法形态，正常评估。`check_contract.py` 的 `--check-words` 在配置存在但无
-> `forbidden_words` 时打警告（该项本就是软审降级）。
->
-> **两个检查器零规则处理为何不同**（均为有意设计）：`risk_floor_check.py` 是
-> 阻断门禁（R-RISK-001 合入必需），零规则评估 = 无证据 → 42 fail-closed；
-> `check_contract.py --check-words` 是软审辅助（禁用词人核兜底），零规则 →
-> 警告 + 降级为人工核对，报告如实标注。
+> **匹配语义与盲区、配置有效性校验、零规则处理差异** → 见
+> `audit/scripts/README.md` §14–§16（SKILL.md 只保留机制骨架，细节不在此重复）。
 >
 > **退出码**：`0` 通过 / `1` 违反（阻断级发现）/ `42` 该门禁未接线
 > （fail-closed：不得把 42 当成通过；判据文件损坏/非法 YAML/零有效规则同样退出

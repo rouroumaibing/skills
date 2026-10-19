@@ -35,10 +35,13 @@ risk_patterns:
   #   - pattern: '\bGRANT\b'
   #     only_paths: ["**/*.sql"]
 
-# R-SEC-004：允许 AI 写入的路径（仅数据文件；单文件体积见 thresholds）
+# R-SEC-004：允许 AI 写入的路径（仅数据文件；单文件体积见 thresholds）。
+# 注意：这是**目录前缀**而非 glob——"docs/" 匹配 docs/ 下所有文件；写 "docs/**"
+# 或 "**/*.md" 会匹配不到任何文件（脚本会打 WARNING，见 check-ai-writable.py）。
+# 允许的扩展名：md/json/yaml/yml/txt/csv。
 ai_writable_paths:
-  - "docs/**"
-  - "**/*.md"
+  - "docs/"
+  - "ai-reports/"
 
 # static_risk_check（R-IMP-004/003）的可选配置段（均可省略；存在但非法 → 42）：
 #   static_risk_allowlist：豁免正则列表——命中的行视为项目显式豁免（应经人审，E-06）
