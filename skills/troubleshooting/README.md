@@ -10,7 +10,7 @@
 
 ## 2. 配置
 1. 编辑 `config.yaml`（最小形态只需三段）：
-   - `conn`：`public-ip` / `private-ip`（同一台跳板机的两个地址，私网优先、连不上回退公网）。
+   - `conn`：`public-ip` / `public-port` / `private-ip`（同一台跳板机的两个地址，私网优先、连不上回退公网）。`public-port` 是**公网地址的 ssh 端口**，只作用于公网链路（私网固定 22），缺省 22。
    - `codehub`：组件别名 -> 本地仓库路径（查最新代码用）。支持两种写法：
      - 简写：`components-1: ~/work/xxx`
      - map 形式（带别名与可选 selector）：

@@ -16,7 +16,7 @@ import lib
 
 def main() -> None:
     conn = lib.load_connection()
-    target = f"{conn.user}@{conn.bastion_host}"
+    target = lib.bastion_target(conn)
 
     if lib.run_ssh(target, "true", timeout=conn.connect_timeout,
                    capture=True, check=False).returncode == 0:

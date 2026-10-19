@@ -1,6 +1,7 @@
 # 不要在此文件写任何密码/密钥。认证靠 SSH 公钥免密（ssh-agent 或 ~/.ssh/config）。
 conn:
   public-ip: xx.xx.xx.xx        # 跳板机公网地址
+  public-port: xx        # 跳板机公网地址ssh端口（缺省 22，只作用于公网链路）
   private-ip: xx.xx.xx.xx       # 跳板机私网地址（内网优先，连不上回退公网）
 
 codehub:                        # 本地代码库：组件别名 -> 本地仓库路径（查最新代码用）

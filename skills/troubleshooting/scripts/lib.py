@@ -7,6 +7,11 @@ Design notes
 * All remote access goes through one bastion host (config.conn.public-ip /
   config.conn.private-ip).  This module never builds host names itself; every
   remote command is funnelled through run_on_bastion() / run_kubectl().
+* The bastion's public SSH port lives in its own config field
+  (``conn.public-port``, default 22) and only ever applies to the *public*
+  path (``user@public-ip:port``).  The private LAN path stays on port 22 —
+  bastion_target() is the single place that assembles the target string,
+  so no other call site needs to know about the port.
 * **Transport is Paramiko (pure-Python SSH), not the ``ssh`` binary.**  This removes the
   dependency on OpenSSH on the client and the Windows ``ControlMaster``/``ControlPath``
   problem (``getsockname failed: Not a socket``) entirely — Paramiko does not read
@@ -74,6 +79,7 @@ DEFAULT_PROBE_TIMEOUT = 5      # private-IP reachability probe (seconds)
 DEFAULT_CACHE_TTL = 300        # how long a resolved bastion host is cached (seconds)
 DEFAULT_REQUEST_TIMEOUT = 10    # kubectl --request-timeout (seconds)
 DEFAULT_KEEPALIVE = 30          # transport keepalive interval (seconds)
+DEFAULT_SSH_PORT = 22           # default SSH port when conn.public-port is unset
 
 # Directories node log reads/searches may target when conn.scan_dirs is not set.
 # Covers system logs plus the per-pod / per-container symlink farms Kubernetes
@@ -147,13 +153,14 @@ class Connection:
 
     def __init__(self, bastion_host, user, context, namespace,
                  public_ip, private_ip, connect_timeout, probe_timeout,
-                 cache_ttl, request_timeout):
+                 cache_ttl, request_timeout, public_port=None):
         self.bastion_host = bastion_host
         self.user = user
         self.context = context
         self.namespace = namespace
         self.public_ip = public_ip
         self.private_ip = private_ip
+        self.public_port = public_port  # ssh port of the PUBLIC path only
         self.connect_timeout = connect_timeout
         self.probe_timeout = probe_timeout
         self.cache_ttl = cache_ttl
@@ -167,7 +174,8 @@ def load_connection() -> Connection:
     The resolved host is cached for ``cache_ttl`` seconds under ~/.cache, but the
     cached value is only trusted when it equals one of the two IPs from config —
     so a tampered cache on a shared machine cannot redirect traffic to a fake
-    bastion.
+    bastion.  ``conn.public-port`` (optional, default 22) is resolved once here
+    and later applied only to the public path by bastion_target().
     """
     global _connection
     config = load_config()
@@ -176,6 +184,13 @@ def load_connection() -> Connection:
     private_ip = (conn_cfg.get("private-ip") or "").strip()
     if not public_ip:
         die("config.conn.public-ip 未配置")
+
+    public_port = None
+    raw_port = str(conn_cfg.get("public-port") or "").strip()
+    if raw_port:
+        if not raw_port.isdigit() or not (1 <= int(raw_port) <= 65535):
+            die(f"config.conn.public-port 不合法: {raw_port}（应为 1-65535 的数字）")
+        public_port = int(raw_port)
 
     user = (conn_cfg.get("user") or "root").strip()
     context = (conn_cfg.get("context") or "").strip()
@@ -227,7 +242,8 @@ def load_connection() -> Connection:
 
     _connection = Connection(bastion_host, user, context, namespace,
                              public_ip, private_ip, connect_timeout,
-                             probe_timeout, cache_ttl, request_timeout)
+                             probe_timeout, cache_ttl, request_timeout,
+                             public_port=public_port)
     return _connection
 
 
@@ -275,15 +291,25 @@ def make_ssh_client() -> "paramiko.SSHClient":
 
 def connect_client(client: "paramiko.SSHClient", target: str, *,
                    password=None, timeout: int | None = None) -> None:
-    """Connect *client* to *target* (user@host) using key/agent auth, or a password.
+    """Connect *client* to *target* (``user@host`` or ``user@host:port``).
+
+    The port may ride inside *target* (``user@host:port``, IPv4 only) — the
+    public bastion path carries ``conn.public-port`` that way; every other
+    target connects on ``DEFAULT_SSH_PORT`` (22).
 
     With ``password=None`` only key/agent auth is attempted (the read-only path).
     Exceptions from Paramiko propagate so callers can map them to statuses.
     """
     timeout = timeout or DEFAULT_CONNECT_TIMEOUT
-    user, _, host = target.partition("@")
+    user, _, hostport = target.partition("@")
+    host, port = hostport, None
+    if hostport.count(":") == 1:
+        h, _, p = hostport.rpartition(":")
+        if p.isdigit():
+            host, port = h, int(p)
     kwargs = {
         "hostname": host,
+        "port": port or DEFAULT_SSH_PORT,
         "username": user or "root",
         "timeout": timeout,
         "banner_timeout": timeout + 10,
@@ -432,13 +458,28 @@ def _ssh_succeeds(target: str, *, timeout: int) -> bool:
     return result is not None and result.returncode == 0
 
 
+def bastion_target(conn: "Connection", host: str | None = None) -> str:
+    """Assemble ``user@host[:port]`` for reaching the bastion.
+
+    *host* defaults to the resolved bastion host (private IP first, public IP
+    on fallback).  ``conn.public-port`` is appended only when the target is the
+    bastion's *public* address — the private LAN path never uses it, so the
+    internal network keeps connecting on port 22.
+    """
+    host = host or conn.bastion_host
+    target = f"{conn.user}@{host}"
+    if conn.public_port and host == conn.public_ip:
+        target += f":{conn.public_port}"
+    return target
+
+
 def run_on_bastion(*command, timeout: int | None = None, capture: bool = True, check: bool = True):
     """Run *command* on the bastion host (config.conn). Arguments are shell-quoted."""
     if _connection is None:
         die("load_connection() 未调用")
     timeout = timeout or _connection.connect_timeout
     remote = shlex.join(command)
-    return run_ssh(f"{_connection.user}@{_connection.bastion_host}", remote,
+    return run_ssh(bastion_target(_connection), remote,
                    timeout=timeout, capture=capture, check=check)
 
 

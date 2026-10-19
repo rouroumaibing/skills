@@ -304,7 +304,7 @@ def cmd_local(args) -> None:
     if fingerprint:
         info(f"[key] 指纹: {fingerprint}")
 
-    target = f"{conn.user}@{conn.public_ip}"
+    target = lib.bastion_target(conn, conn.public_ip)
     info(f"[push] 追加本机公钥到跳板机 {target}（paramiko，幂等，只追加不覆盖）…")
     status = append_public_key(target, public_key)
     if status == "ALREADY":
@@ -325,7 +325,7 @@ def cmd_local(args) -> None:
 def cmd_bastion(args) -> None:
     """Configure passwordless SSH from the bastion to the cluster nodes (idempotent)."""
     conn = load_connection()
-    target = f"{conn.user}@{conn.bastion_host}"
+    target = lib.bastion_target(conn)
 
     if not verify_passwordless(target):
         warn(f"status=NEEDS_MANUAL_AUTH 本机到跳板机 {target} 未免密；请先运行 `setup_ssh.py local`。")
@@ -365,7 +365,7 @@ def cmd_status(args) -> None:
     else:
         rows.append(("本机密钥", "MISSING", "运行 setup_ssh.py local 生成"))
 
-    target = f"{conn.user}@{conn.public_ip}"
+    target = lib.bastion_target(conn, conn.public_ip)
     reachable = verify_passwordless(target)
     rows.append(("本机 -> 跳板机 免密", "OK" if reachable else "FAIL", target))
 
@@ -402,7 +402,7 @@ def _resolve_bastion_target(explicit_host):
     if explicit_host:
         return explicit_host
     conn = load_connection()
-    return f"{conn.user}@{conn.public_ip}"
+    return lib.bastion_target(conn, conn.public_ip)
 
 
 def cmd_export_bundle(args) -> None:
