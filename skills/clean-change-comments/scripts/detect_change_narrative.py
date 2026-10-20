@@ -42,6 +42,26 @@ MARKERS: List[re.Pattern[str]] = [
     re.compile(r"previously|used to|was using|changed from|no longer|deprecated|refactored|migrated to|replaced with|now uses|instead of", re.IGNORECASE),
 ]
 
+# Decision-date leak: a date stamped together with a decision marker, which
+# must live ONLY in 变更历史/CHANGELOG — never in body, titles, subtitles,
+# status lines, or inline (rule 4). Examples: （2026-10-20 设计已定） /
+# （2026-09-28 裁定） / （2026-10-08 修正）. Both word-before-date and
+# word-after-date orderings inside the parentheses are matched.
+DECISION_DATE_RE = re.compile(
+    r"[（(][^）)\n]{0,18}?20\d\d-\d\d-\d\d[^）)\n]{0,18}?"
+    r"(裁定|修正|拍板|设计已定|设计裁定|决策|已定|钢人裁定|落地|已落地)"
+    r"[^）)\n]{0,10}?[）)]"
+    r"|"
+    r"[（(][^）)\n]{0,10}?(裁定|修正|拍板|设计已定|设计裁定|决策|已定|钢人裁定|落地|已落地)"
+    r"[^）)\n]{0,18}?20\d\d-\d\d-\d\d[^）)\n]{0,18}?[）)]"
+)
+# Bare date inside parentheses in body/status-lines (e.g. `状态（2026-10-20）`)
+# — also a decision-date leak when no changelog context surrounds it.
+BARE_DATE_RE = re.compile(r"[（(]20\d\d-\d\d-\d\d[）)]")
+# A heading (title / subtitle / section) must never carry a date in parentheses.
+HEADING_DATE_RE = re.compile(r"[（(]20\d\d-\d\d-\d\d")
+MARKERS.extend([DECISION_DATE_RE, BARE_DATE_RE])
+
 # Headings whose *content* is a legitimate home for history/decisions — skip
 # their bodies when scanning Markdown.
 SKIP_SECTION_RE = re.compile(
@@ -152,7 +172,13 @@ def _md_bodies(lines: List[str]):
     for i, raw in enumerate(lines, start=1):
         heading = re.match(r"^#{1,6}\s+(.*)$", raw)
         if heading:
-            skipping = bool(SKIP_SECTION_RE.search(heading.group(1)))
+            title = heading.group(1)
+            skipping = bool(SKIP_SECTION_RE.search(title))
+            # A heading (title / subtitle / section) must not carry a date in
+            # parentheses — the date belongs in the 变更历史 chapter, not in
+            # the heading. Flag non-skip headings that leak one (rule 4).
+            if not skipping and HEADING_DATE_RE.search(title):
+                yield i, raw
             continue
         # setext heading (underline of = or -)
         if re.match(r"^[-=]{3,}\s*$", raw.strip()):
