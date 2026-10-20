@@ -16,6 +16,19 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib
 
 
+def _make_readonly(root: str) -> None:
+    """Best-effort 把 worktree 设为只读（兑现 docstring 的 read-only 承诺）。"""
+    try:
+        for dirpath, dirnames, filenames in os.walk(root):
+            for d in dirnames:
+                os.chmod(os.path.join(dirpath, d), 0o555)
+            for f in filenames:
+                os.chmod(os.path.join(dirpath, f), 0o444)
+        os.chmod(root, 0o555)
+    except OSError as exc:
+        print(f"  warn: worktree 设只读失败（可继续，勿在其中改动）: {exc}")
+
+
 def main() -> None:
     args = sys.argv[1:]
     config = lib.load_config()
@@ -90,6 +103,7 @@ def main() -> None:
     path = os.path.join(worktree, f"{component}-{safe_tag}")
     if not os.path.isdir(path):
         lib.git_add_worktree(repo_path, path, commit)
+        _make_readonly(path)
     print(f"component={component} repo={repo_path} status=OK tag={tag} "
           f"commit={commit[:12]} path={path}")
 

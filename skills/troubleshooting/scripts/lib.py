@@ -41,10 +41,12 @@ Design notes
 """
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import socket
 import sys
+import threading
 import time
 import shlex
 import subprocess
@@ -70,6 +72,14 @@ except ImportError:
 # ERROR level; that noise would drown our own status lines, so silence it here.
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
+# Windows/GBK 控制台：强制 UTF-8 输出，非 GBK 字符替换而不是抛 UnicodeEncodeError
+for _s in (sys.stdout, sys.stderr):
+    if hasattr(_s, "reconfigure"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_PATH = os.path.join(ROOT_DIR, "config.yaml")
 
@@ -90,8 +100,9 @@ DEFAULT_SCAN_DIRS = [
     "/var/log/pods",
     "/var/log/containers",
     "/data/logs",
-    "/var/lib/kubelet",
 ]
+# /var/lib/kubelet 刻意不在缺省集：其 pki/ 下是节点私钥，与「只读排查日志」
+# 的边界不符；确需读取时由运维在 conn.scan_dirs 显式加入并自担风险。
 
 _config_cache = None
 _connection = None  # populated by load_connection(); used by the remote helpers
@@ -280,11 +291,15 @@ def make_ssh_client() -> "paramiko.SSHClient":
     except (paramiko.SSHException, OSError) as exc:
         sys.stderr.write(f"warn: 读取系统 known_hosts 失败: {exc}\n")
     known_hosts = os.path.expanduser("~/.ssh/known_hosts")
-    if os.path.isfile(known_hosts):
-        try:
-            client.load_host_keys(known_hosts)
-        except (paramiko.SSHException, OSError) as exc:
-            sys.stderr.write(f"warn: 读取 {known_hosts} 失败: {exc}\n")
+    try:
+        if not os.path.isfile(known_hosts):
+            fd = os.open(known_hosts, os.O_WRONLY | os.O_CREAT, 0o600)
+            os.close(fd)
+        # load_host_keys（而非仅 load_system_host_keys）绑定文件名：
+        # AutoAddPolicy 新增的主机密钥会自动落盘，否则每次运行都是「首次信任」
+        client.load_host_keys(known_hosts)
+    except (paramiko.SSHException, OSError) as exc:
+        sys.stderr.write(f"warn: 读取/初始化 {known_hosts} 失败: {exc}\n")
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     return client
 
@@ -344,6 +359,9 @@ def close_all_clients() -> None:
         _close_client(target)
 
 
+atexit.register(close_all_clients)
+
+
 def get_client(target: str, *, timeout: int | None = None) -> "paramiko.SSHClient":
     """Return a connected SSHClient for *target*, reusing a live cached one.
 
@@ -388,12 +406,25 @@ def _safe_close(client: "paramiko.SSHClient") -> None:
 
 
 def _exec_once(client: "paramiko.SSHClient", target: str, remote_command: str,
-               timeout: int, capture: bool) -> _Result:
+               timeout: int, capture: bool, stdin_data: str | None = None) -> _Result:
     """Run one exec_command round-trip, recording the wall-clock duration."""
     started = time.monotonic()
     _stdin, stdout, stderr = client.exec_command(remote_command, timeout=timeout + 5)
-    out = stdout.read().decode("utf-8", "replace")
+    if stdin_data:
+        _stdin.write(stdin_data)
+        _stdin.flush()
+        _stdin.channel.shutdown_write()  # signal EOF so remote readers unblock
+    # stdout/stderr 必须并发排空：先读完一路再读另一路时，任一路缓冲打满会
+    # 阻塞远端进程 -> 两路都等不到 EOF（stderr 很大时 classic 死锁）
+    out_box: dict = {}
+    t_out = threading.Thread(
+        target=lambda: out_box.setdefault(
+            "v", stdout.read().decode("utf-8", "replace")),
+        daemon=True)
+    t_out.start()
     err = stderr.read().decode("utf-8", "replace")
+    t_out.join()
+    out = out_box.get("v", "")
     returncode = stdout.channel.recv_exit_status()
     result = _Result(returncode, out if capture else "", err if capture else "")
     result.duration = time.monotonic() - started
@@ -401,7 +432,8 @@ def _exec_once(client: "paramiko.SSHClient", target: str, remote_command: str,
 
 
 def run_ssh(target: str, remote_command: str, *, timeout: int = DEFAULT_CONNECT_TIMEOUT,
-            capture: bool = True, check: bool = True) -> _Result:
+            capture: bool = True, check: bool = True,
+            stdin_data: str | None = None) -> _Result:
     """Run *remote_command* on *target* (user@host) over Paramiko.
 
     Returns a CompletedProcess-like _Result. On auth failure it maps to
@@ -409,7 +441,9 @@ def run_ssh(target: str, remote_command: str, *, timeout: int = DEFAULT_CONNECT_
     A transport-level failure (SSHException/OSError — connection dropped
     between calls, NAT idle timeout) retries once after reconnecting;
     a command *timeout* is never retried, because the command may already
-    have started running on the remote side.
+    have started running on the remote side. ``stdin_data`` (if given) is
+    written to the remote process's stdin and EOF-signalled — used for
+    ``kubectl apply -f -`` style manifest piping.
     """
     try:
         client = get_client(target, timeout=timeout)
@@ -429,7 +463,8 @@ def run_ssh(target: str, remote_command: str, *, timeout: int = DEFAULT_CONNECT_
     while True:
         attempts += 1
         try:
-            return _exec_once(client, target, remote_command, timeout, capture)
+            return _exec_once(client, target, remote_command, timeout, capture,
+                              stdin_data=stdin_data)
         except (socket.timeout, TimeoutError):
             _close_client(target)
             sys.stderr.write(f"warn: 远端命令超时 {target}\n")
@@ -473,18 +508,20 @@ def bastion_target(conn: "Connection", host: str | None = None) -> str:
     return target
 
 
-def run_on_bastion(*command, timeout: int | None = None, capture: bool = True, check: bool = True):
+def run_on_bastion(*command, timeout: int | None = None, capture: bool = True, check: bool = True,
+                   stdin_data: str | None = None):
     """Run *command* on the bastion host (config.conn). Arguments are shell-quoted."""
     if _connection is None:
         die("load_connection() 未调用")
     timeout = timeout or _connection.connect_timeout
     remote = shlex.join(command)
     return run_ssh(bastion_target(_connection), remote,
-                   timeout=timeout, capture=capture, check=check)
+                   timeout=timeout, capture=capture, check=check,
+                   stdin_data=stdin_data)
 
 
 def run_kubectl(*args, namespace: str | None = None, timeout: int | None = None,
-                capture: bool = True, check: bool = True):
+                capture: bool = True, check: bool = True, stdin_data: str | None = None):
     """Run kubectl on the bastion, injecting --context when configured.
 
     ``namespace`` semantics:
@@ -499,11 +536,20 @@ def run_kubectl(*args, namespace: str | None = None, timeout: int | None = None,
     if ns:
         cmd += ["-n", ns]
     cmd += list(args)
-    return run_on_bastion(*cmd, timeout=timeout, capture=capture, check=check)
+    return run_on_bastion(*cmd, timeout=timeout, capture=capture, check=check,
+                          stdin_data=stdin_data)
+
+
+_IP_TOKEN_RE = re.compile(r"[0-9a-fA-F.:]+")
 
 
 def resolve_node_ip(name: str) -> str:
-    """Return a node's InternalIP from the cluster (never built from user input)."""
+    """Return ONE InternalIP of a node (never built from user input).
+
+    jsonpath 对双栈节点会返回空格分隔的多个地址；不拆分直接拼进 hop 命令
+    会变成 ``ssh root@10.0.0.5 fd00::5 '...'``（远端执行 fd00::5 df -h）。
+    优先取 IPv4，否则取第一个合法 token。
+    """
     if not re.fullmatch(r"[a-z0-9.-]+", name):
         die(f"节点名不合法: {name}")
     result = run_kubectl("get", "node", name,
@@ -512,7 +558,11 @@ def resolve_node_ip(name: str) -> str:
     ip = (result.stdout or "").strip() if result else ""
     if not ip:
         die(f"集群中没有节点 {name}")
-    return ip
+    tokens = [t for t in ip.split() if _IP_TOKEN_RE.fullmatch(t)]
+    if not tokens:
+        die(f"节点 {name} 的 InternalIP 不合法: {ip}")
+    v4 = [t for t in tokens if ":" not in t]
+    return (v4 or tokens)[0]
 
 
 def execute_on_node(node_ip: str, *command, timeout: int | None = None,
@@ -525,26 +575,52 @@ def execute_on_node(node_ip: str, *command, timeout: int | None = None,
     """
     if _connection is None:
         die("load_connection() 未调用")
+    if not re.fullmatch(r"[A-Za-z0-9._:-]+", node_ip) or node_ip.startswith("-"):
+        die(f"节点 IP 不合法: {node_ip}")
     timeout = timeout or _connection.connect_timeout
     inner = shlex.join(command)
+    # user@host 整体 quote：未校验/未 quote 的 "IP" 会把 hop 命令拆散，
+    # 构造的「IP」（如 1.2.3.4; id #）甚至能在跳板机上注入第二段命令
     hop = ("ssh -o BatchMode=yes -o ConnectTimeout=%d "
-           "-o StrictHostKeyChecking=accept-new %s@%s %s"
-           % (timeout, _connection.user, node_ip, shlex.quote(inner)))
+           "-o StrictHostKeyChecking=accept-new %s %s"
+           % (timeout, shlex.quote(f"{_connection.user}@{node_ip}"),
+              shlex.quote(inner)))
     return run_on_bastion("bash", "-c", hop, timeout=timeout, capture=capture, check=check)
 
 
-def selector_for(component: str) -> str:
-    """Pod label selector for a component: codehub[component].selector, else app=<component>."""
+def selector_override(component: str) -> str | None:
+    """Configured pod-label selector override for a component, else None.
+
+    Platform-agnostic on purpose: the skill carries NO built-in knowledge of
+    any distribution's component names or label conventions.  Callers fall
+    back to generic label-key candidates and a name-substring match (see
+    logs.py); per-component quirks, if any, belong in config (codehub
+    [component].selector), not in code.
+    """
     entry = (load_config().get("codehub", {}) or {}).get(component)
     if isinstance(entry, dict) and entry.get("selector"):
         return entry["selector"]
-    return f"app={component}"
+    return None
 
 
 # ----------------------------- git helpers (local) -----------------------------
-def git(*args, repo: str, capture: bool = True, check: bool = True):
-    """Run a local git command against *repo* and return the CompletedProcess."""
-    result = subprocess.run(["git", "-C", repo, *args], capture_output=capture, text=True)
+def git(*args, repo: str, capture: bool = True, check: bool = True,
+        timeout: int | None = None, no_prompt: bool = False):
+    """Run a local git command against *repo* and return the CompletedProcess.
+
+    no_prompt=True 禁用凭据交互（GIT_TERMINAL_PROMPT=0 / GIT_ASKPASS=echo）：
+    被 Agent 调用时卡在凭据提示会挂死整个会话，宁可失败。timeout 到点按
+    rc=124 处理（fetch 类调用以 warn 兜底，不 fail 整个流程）。
+    """
+    env = None
+    if no_prompt:
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "echo"}
+    try:
+        result = subprocess.run(["git", "-C", repo, *args], capture_output=capture,
+                                text=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        sys.stderr.write(f"warn: git {' '.join(args[:2])} 超时（>{timeout}s）\n")
+        result = subprocess.CompletedProcess(args, returncode=124, stdout="", stderr="")
     if check and result.returncode != 0:
         err = (result.stderr or "").strip()
         die(f"git 命令失败: {' '.join(args)} -> {err}")
@@ -553,7 +629,8 @@ def git(*args, repo: str, capture: bool = True, check: bool = True):
 
 def git_fetch(repo: str) -> None:
     """Fetch tags; warn (do not fail) if the remote is unreachable."""
-    result = git("fetch", "--tags", "--quiet", repo=repo, check=False)
+    result = git("fetch", "--tags", "--quiet", repo=repo, check=False,
+                 timeout=120, no_prompt=True)
     if result.returncode != 0:
         sys.stderr.write("warn: fetch 失败，使用本地已有 tag\n")
 

@@ -8,6 +8,11 @@ lines worth a second look, not to auto-delete.
 
 Usage:
     python detect_change_narrative.py <file-or-dir> [--json] [--ext go,ts,py,md,mjs,vue,makefile,sql,yaml,sh]
+    python detect_change_narrative.py <file-or-dir> --diff [BASE]   # only lines added by git diff BASE (default HEAD)
+
+In --diff mode every newly-added comment line is flagged as a candidate that
+must be classified against rule 2 (keep only 防回退 / 非直觉约束) or removed;
+lines matching a rule-1 narration marker are labeled with that marker.
 
 Exit code is 0 when no candidates are found, 1 when at least one is found
 (so it can be wired into CI as a soft check).
@@ -271,22 +276,121 @@ def collect_paths(root: str, exts: List[str]) -> List[str]:
     return results
 
 
+def _git_root(path: str) -> Optional[str]:
+    """Return the git repository root containing *path*, or None."""
+    p = path if os.path.isdir(path) else (os.path.dirname(path) or ".")
+    root = os.path.abspath(p)
+    while True:
+        if os.path.isdir(os.path.join(root, ".git")):
+            return root
+        parent = os.path.dirname(root)
+        if parent == root:
+            return None
+        root = parent
+
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+# Label for newly-added comment lines that carry no narration marker: they
+# still must be classified against rule 2 (keep only 防回退 / 非直觉约束).
+NEW_COMMENT_LABEL = "新增注释·待归类(rule2)"
+
+
+def scan_diff(paths: List[str], base: str, exts: List[str]) -> List[Hit]:
+    """Flag comment lines added by `git diff <base>` under *paths*.
+
+    Necessity of a comment cannot be judged mechanically, so the gate is
+    presence itself: every newly-added comment line becomes a candidate that
+    must be classified (rule 2) or removed. Lines matching a rule-1 narration
+    marker are labeled with that marker instead. Markdown body lines are
+    content rather than comments, so only narration / decision-date matches
+    are flagged there.
+    """
+    import subprocess
+
+    hits: List[Hit] = []
+    for root in paths:
+        repo = _git_root(root)
+        if repo is None:
+            print(f"（--diff 跳过 {root}：不在 git 仓库内）")
+            continue
+        spec = ["git", "-C", repo, "diff", "-U0", "--no-color", base, "--"]
+        rel = os.path.relpath(os.path.abspath(root), repo)
+        if rel != ".":
+            spec.append(rel)
+        try:
+            proc = subprocess.run(spec, capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"（--diff 跳过 {root}：git diff 失败 {exc}）")
+            continue
+        cur_path: Optional[str] = None
+        new_ln = 0
+        for line in proc.stdout.splitlines():
+            if line.startswith("diff --git"):
+                m = re.search(r" b/(.+)$", line)
+                cur_path = m.group(1) if m else None
+                new_ln = 0
+            elif line.startswith("+++ "):
+                m = re.match(r"\+\+\+ b/(.*)$", line)
+                cur_path = m.group(1) if m else None
+                new_ln = 0
+            elif line.startswith("--- ") or line.startswith("index "):
+                continue
+            elif _HUNK_RE.match(line):
+                new_ln = int(_HUNK_RE.match(line).group(1))
+            elif cur_path is not None and line.startswith("+"):
+                new_ln += 1
+                body = line[1:]
+                ext = _ext_of(cur_path)
+                if ext not in exts:
+                    continue
+                if ext in MD_EXTS:
+                    matched = next((p for p in MARKERS if p.search(body)), None)
+                    if matched:
+                        hits.append(Hit(path=os.path.join(repo, cur_path),
+                                        line_no=new_ln, pattern=matched.pattern,
+                                        text=body.strip()))
+                    continue
+                if ext == "vue":
+                    parts = [mm.group(1) for mm in re.finditer(r"<!--(.*?)-->", body)]
+                    ct = _comment_text(body, "ts")
+                    if ct:
+                        parts.append(ct)
+                    ct = "\n".join(p.strip() for p in parts if p.strip())
+                else:
+                    ct = _comment_text(body, ext)
+                if not ct:
+                    continue
+                matched = next((p for p in MARKERS if p.search(ct)), None)
+                hits.append(Hit(path=os.path.join(repo, cur_path), line_no=new_ln,
+                                pattern=matched.pattern if matched else NEW_COMMENT_LABEL,
+                                text=ct.strip()))
+            # "-" (deleted) and " " (context) lines never advance new_ln
+    return hits
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("paths", nargs="+", help="files or directories to scan")
     parser.add_argument("--ext", default=",".join(DEFAULT_EXTS),
                         help="comma-separated extensions to scan (default: common source exts)")
+    parser.add_argument("--diff", nargs="?", const="HEAD", default=None, metavar="BASE",
+                        help="scan only lines added by `git diff BASE` (default BASE=HEAD) "
+                             "under the given paths, instead of whole files")
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     args = parser.parse_args(argv)
 
     exts = [e.strip().lower().lstrip(".") for e in args.ext.split(",") if e.strip()]
     all_hits: List[Hit] = []
 
-    for root in args.paths:
-        for path in collect_paths(root, exts):
-            ext = _ext_of(path)
-            all_hits.extend(scan_file(path, ext))
+    if args.diff is not None:
+        all_hits.extend(scan_diff(args.paths, args.diff, exts))
+    else:
+        for root in args.paths:
+            for path in collect_paths(root, exts):
+                ext = _ext_of(path)
+                all_hits.extend(scan_file(path, ext))
 
     if args.json:
         payload = [{"path": h.path, "line": h.line_no,

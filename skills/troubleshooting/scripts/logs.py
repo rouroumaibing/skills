@@ -25,7 +25,8 @@ Discovery-first model (problem-driven two-stage troubleshooting):
   component's pods across namespaces (fixes NO_PODS when business pods live
   outside the default namespace).  ``-n NS`` narrows explicitly.
 * ``node-find`` searches the scan directory set (``conn.scan_dirs``, default:
-  /var/log, /var/log/pods, /var/log/containers, /data/logs, /var/lib/kubelet)
+  /var/log, /var/log/pods, /var/log/containers, /data/logs — /var/lib/kubelet
+  is deliberately NOT in the set: it holds kubelet pki/ private keys)
   and lists regular files only (``-type f``), so symlinks cannot escape the set.
 * ``node-log`` refuses paths outside that set unless ``--any-path`` is given —
   the one explicit escape hatch, which always echoes a warning (auditable,
@@ -121,6 +122,23 @@ def _nonneg_int(value: str, flag: str) -> int:
     return int(value)
 
 
+def _pos_int(value: str, flag: str) -> int:
+    """Validate a positive integer CLI argument (0 would mean 'unlimited')."""
+    if not re.fullmatch(r"[1-9][0-9]*", value):
+        lib.die(f"{flag} 必须是正整数（0 会被当成不限量，禁止）")
+    return int(value)
+
+
+def _kubectl_duration(since: str) -> str:
+    """kubectl --since 走 Go duration 解析（不认 d）；1d -> 24h 换算。
+
+    node-journal 不经此转换：journalctl 自己的 span 语法认 d。
+    """
+    if since.endswith("d"):
+        return f"{int(since[:-1]) * 24}h"
+    return since
+
+
 def _add_grep_flags(parser: argparse.ArgumentParser) -> None:
     """Attach the shared --grep/context flag set to a subparser."""
     parser.add_argument("--grep", default="")
@@ -140,7 +158,12 @@ def _grep_context_args(args) -> tuple:
     context = _nonneg_int(args.context, "--context")
     if context:
         before = after = context
-    max_matches = _nonneg_int(args.max_matches, "--max-matches")
+    max_matches = _pos_int(args.max_matches, "--max-matches")
+    if args.grep:
+        try:
+            re.compile(args.grep)
+        except re.error as exc:
+            lib.die(f"--grep 正则不合法: {exc}")
     return args.grep, before, after, max_matches
 
 
@@ -237,6 +260,51 @@ def _pods_matching(selector: str, namespace: str) -> list[tuple[str, str]]:
     return pairs
 
 
+# Generic label-key conventions, NOT a component whitelist: ecosystems differ
+# in which key they label pods with — workloads usually app=, daemon/infra
+# often k8s-app=, kubeadm/legacy control-plane component=.  No distribution
+# names are hardcoded; per-component quirks belong in config (codehub
+# [component].selector) or are caught by the name-substring fallback.
+_LABEL_KEYS = ("app", "k8s-app", "component")
+
+
+def _name_pairs(component: str, namespace: str) -> list[tuple[str, str]]:
+    """Platform-agnostic catch-all: pods whose *name* contains the component.
+
+    One full listing, matched client-side — works regardless of which label
+    scheme (or none) the distribution uses.
+    """
+    scope = ["-n", namespace] if namespace else ["-A"]
+    result = lib.run_kubectl("get", "pods", *scope,
+                             "-o", "jsonpath=" + _POD_PAIRS_JSONPATH,
+                             namespace="", capture=True)
+    pairs = []
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if "/" in line:
+            ns, _, name = line.partition("/")
+            if ns and name and component in name:
+                pairs.append((ns, name))
+    return pairs
+
+
+def _pods_for_component(component: str, namespace: str) -> tuple[list, str]:
+    """Resolve (namespace, pod) pairs for a component, platform-agnostically.
+
+    Order: config override -> generic label-key candidates -> name-substring.
+    Returns (pairs, how) where how describes what matched, e.g.
+    "selector=app=nginx" / "name-substring=kube-controller-manager".
+    """
+    override = lib.selector_override(component)
+    candidates = ([override] if override
+                  else [f"{key}={component}" for key in _LABEL_KEYS])
+    for sel in candidates:
+        pairs = _pods_matching(sel, namespace)
+        if pairs:
+            return pairs, f"selector={sel}"
+    return _name_pairs(component, namespace), f"name-substring={component}"
+
+
 def _resolve_pod(pod: str, namespace: str) -> tuple[str, str]:
     """Return (namespace, pod) for *pod*, searching all namespaces when none given."""
     if namespace:
@@ -258,6 +326,14 @@ def _remote_lines(result) -> list[str]:
     if result is None or (result.returncode or 0) != 0:
         return []
     return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+
+
+def _die_on_fail(result, what: str) -> None:
+    """只读命令远端失败必须显式失败，不许吞成空输出（verify 会假 PASS）。"""
+    if result is None or (result.returncode or 0) != 0:
+        rc = result.returncode if result else "?"
+        detail = ((result.stderr or "").strip() if result else "")[:200]
+        lib.die(f"{what} 失败 rc={rc}: {detail or '无 stderr'}")
 
 
 def _pause_pid(node_ip: str, name: str, namespace: str) -> tuple[str, str]:
@@ -371,8 +447,8 @@ def _validate_args(args) -> None:
 
     if args.command == "logs":
         if not re.fullmatch(r"[0-9]+[smhd]", args.since):
-            lib.die("--since 格式应为 30m / 2h / 1d")
-        _nonneg_int(args.tail, "--tail")
+            lib.die("--since 格式应为 30m / 2h / 1d（d 会换算为 h 传给 kubectl）")
+        _pos_int(args.tail, "--tail")
         if args.container and args.all_containers:
             lib.die("-c/--container 与 --all-containers 互斥，二选一")
         if args.container and not _CONTAINER_RE.fullmatch(args.container):
@@ -384,7 +460,7 @@ def _validate_args(args) -> None:
         _grep_context_args(args)
 
     elif args.command == "events":
-        _nonneg_int(args.max, "--max")
+        _pos_int(args.max, "--max")
         if args.for_object and not _NODE_NAME_RE.fullmatch(args.for_object):
             lib.die(f"--for 对象名不合法: {args.for_object}")
 
@@ -397,7 +473,7 @@ def _validate_args(args) -> None:
             lib.die("节点名不合法")
 
     elif args.command == "node-log":
-        _nonneg_int(args.tail, "--tail")
+        _pos_int(args.tail, "--tail")
         if not args.any_path:
             lib.validate_log_path(args.file)
         _grep_context_args(args)
@@ -410,7 +486,7 @@ def _validate_args(args) -> None:
         _grep_context_args(args)
 
     elif args.command == "node-find":
-        _nonneg_int(args.max, "--max")
+        _pos_int(args.max, "--max")
         if args.name and not _GLOB_RE.fullmatch(args.name):
             lib.die(f"--name 只允许文件名通配字符（*.log 等）: {args.name}")
         if args.newer and not re.fullmatch(r"[0-9]+[mhd]", args.newer):
@@ -513,28 +589,49 @@ def main() -> None:
 
 def cmd_pods(args) -> None:
     scope = ["-n", args.namespace] if args.namespace else ["-A"]
-    if args.component:
-        result = lib.run_kubectl("get", "pods", *scope, "-l",
-                                 lib.selector_for(args.component), "-o", "wide",
-                                 namespace="", capture=True)
-    else:
+    if not args.component:
         result = lib.run_kubectl("get", "pods", *scope, "-o", "wide",
                                  namespace="", capture=True)
-    print(result.stdout.rstrip())
+        _die_on_fail(result, "kubectl get pods")
+        print(result.stdout.rstrip())
+        return
+    override = lib.selector_override(args.component)
+    candidates = ([override] if override
+                  else [f"{key}={args.component}" for key in _LABEL_KEYS])
+    for sel in candidates:
+        result = lib.run_kubectl("get", "pods", *scope, "-l", sel, "-o", "wide",
+                                 namespace="", capture=True)
+        _die_on_fail(result, f"kubectl get pods -l {sel}")
+        body = (result.stdout or "").strip()
+        if body and not body.lower().startswith("no resources"):
+            print(body)
+            return
+    pairs = _name_pairs(args.component, args.namespace)
+    if not pairs:
+        print(f"status=NO_PODS component={args.component} "
+              f"tried={','.join(candidates)}+name-substring "
+              f"namespace={args.namespace or 'ALL'}")
+        print("  已自动尝试 app=/k8s-app=/component= 标签键与 pod 名称子串；"
+              "组件 label 特殊时在 codehub 配 selector 覆盖")
+        return
+    print(f"(label 未命中，按 pod 名称子串 '{args.component}' 匹配，共 {len(pairs)} 个)")
+    for ns, name in pairs:
+        print(f"{ns}/{name}")
 
 def cmd_logs(args) -> None:
-    selector = lib.selector_for(args.component)
-    pairs = _pods_matching(selector, args.namespace)
+    pairs, how = _pods_for_component(args.component, args.namespace)
     if args.pod:
         pairs = [(ns, pod) for ns, pod in pairs if pod == args.pod]
     if not pairs:
-        print(f"status=NO_PODS component={args.component} selector={selector} "
-              f"namespace={args.namespace or 'ALL'}")
-        print("  已默认扫描全部 namespace；可用 -n <ns> 收窄，或检查 codehub 的 selector 配置")
+        print(f"status=NO_PODS component={args.component} "
+              f"matched_by={how}(0 hits) namespace={args.namespace or 'ALL'}")
+        print("  已默认扫描全部 namespace，并自动尝试 app=/k8s-app=/component= "
+              "标签键与 pod 名称子串；可用 -n <ns> 收窄，或检查 codehub 的 selector 配置。"
+              "托管控制面集群不下发控制面 Pod，此时 NO_PODS 属真阴性")
         sys.exit(1)
     if len(pairs) > MAX_PODS_PER_READ:
         print(f"status=TOO_MANY_PODS component={args.component} "
-              f"selector={selector} count={len(pairs)}")
+              f"matched_by={how} count={len(pairs)}")
         print(f"  匹配 pod 超过 {MAX_PODS_PER_READ} 个；"
               "用 --pod <name> 指定单个 pod，或 -n <ns> 收窄后再读日志")
         sys.exit(1)
@@ -544,14 +641,28 @@ def cmd_logs(args) -> None:
     if args.all_containers:
         extra += ["--all-containers=true"]
     previous = ["--previous"] if args.previous else []
+    failed: list[str] = []
     for ns, pod in pairs:
         print(f"=== {ns}/{pod} (since={args.since} tail={args.tail} "
               f"grep={args.grep or 'none'}) ===")
-        out = lib.run_kubectl("logs", "-n", ns, pod, f"--since={args.since}",
+        out = lib.run_kubectl("logs", "-n", ns, pod,
+                              f"--since={_kubectl_duration(args.since)}",
                               f"--tail={args.tail}", *extra, *previous,
                               namespace="", capture=True)
+        if (out.returncode or 0) != 0:
+            # 失败必须可见：吞成空输出会让 verify 的 expect-not 断言假 PASS
+            failed.append(f"{ns}/{pod}")
+            sys.stderr.write(f"warn: 读取 {ns}/{pod} 日志失败: "
+                             f"{(out.stderr or '').strip()[:200]}\n")
+            continue
         lines = _render_grep((out.stdout or "").splitlines(), args)
         print("\n".join(_tail(lines, OUTPUT_LIMIT)))
+    if failed:
+        print(f"status=REMOTE_FAIL component={args.component} "
+              f"failed={' '.join(failed)}")
+        print("  kubectl logs 对上述 pod 执行失败（失败≠无匹配日志）；"
+              "先 describe 确认 pod/容器状态，不要把空输出当结论")
+        sys.exit(1)
 
 def cmd_events(args) -> None:
     selectors = []
@@ -564,6 +675,7 @@ def cmd_events(args) -> None:
     if selectors:
         cmd += ["--field-selector", ",".join(selectors)]
     result = lib.run_kubectl(*cmd, namespace="", capture=True)
+    _die_on_fail(result, "kubectl get events")
     print("\n".join(_tail((result.stdout or "").splitlines(), int(args.max))))
 
 
@@ -571,10 +683,12 @@ def cmd_describe(args) -> None:
     ns, pod = _resolve_pod(args.pod, args.namespace)
     result = lib.run_kubectl("describe", "pod", "-n", ns, pod,
                              namespace="", capture=True)
+    _die_on_fail(result, f"kubectl describe pod {ns}/{pod}")
     print(result.stdout.rstrip())
 
 def cmd_describe_node(args) -> None:
     result = lib.run_kubectl("describe", "node", args.node, capture=True)
+    _die_on_fail(result, f"kubectl describe node {args.node}")
     print(result.stdout.rstrip())
 
 
@@ -583,6 +697,7 @@ def cmd_node_of(args) -> None:
     result = lib.run_kubectl("get", "pod", "-n", ns, pod,
                              "-o", "jsonpath=node={.spec.nodeName} hostIP={.status.hostIP}",
                              namespace="", capture=True)
+    _die_on_fail(result, f"kubectl get pod {ns}/{pod}")
     print((result.stdout or "").rstrip())
 
 
@@ -616,6 +731,7 @@ def cmd_node_log(args) -> None:
     print(f"=== node {args.node}({node_ip}):{real} "
           f"(tail={args.tail} grep={args.grep or 'none'}) ===")
     out = lib.execute_on_node(node_ip, "tail", "-n", args.tail, real, capture=True)
+    _die_on_fail(out, f"节点上 tail {real}")
     lines = _render_grep((out.stdout or "").splitlines(), args)
     print("\n".join(_tail(lines, OUTPUT_LIMIT)))
 
@@ -625,6 +741,7 @@ def cmd_node_journal(args) -> None:
           f"(since={args.since} grep={args.grep or 'none'}) ===")
     out = lib.execute_on_node(node_ip, "journalctl", "-u", args.unit, "--no-pager",
                               f"--since=-{args.since}", capture=True)
+    _die_on_fail(out, f"journalctl -u {args.unit}")
     lines = _render_grep((out.stdout or "").splitlines(), args)
     print("\n".join(_tail(lines, OUTPUT_LIMIT)))
 
@@ -649,20 +766,25 @@ def cmd_node_find(args) -> None:
     find_args += ["-printf", "%p\\t%s\\t%TY-%Tm-%Td %TH:%TM\\n"]
     node_ip = lib.resolve_node_ip(args.node)
     result = lib.execute_on_node(node_ip, *find_args, capture=True)
-    rows = []
+    if (result.returncode or 0) != 0 and (result.stderr or "").strip():
+        sys.stderr.write(f"warn: find 部分目录不可读（结果可能不完整）: "
+                         f"{result.stderr.strip()[:200]}\n")
+    rows: dict = {}
     for line in (result.stdout or "").splitlines():
         parts = line.split("\t")
         if len(parts) == 3:
-            rows.append(parts)
+            # 根目录互相重叠（/var/log 含 /var/log/pods）会重复命中，按路径去重
+            rows.setdefault(parts[0], parts)
+    ordered = sorted(rows.values(), key=lambda p: (p[2], p[0]), reverse=True)
     print(f"=== node {args.node}({node_ip}) find roots={' '.join(roots)} "
           f"name={args.name or '*'} newer={args.newer or 'any'} "
           f"(max={args.max}) ===")
-    if not rows:
+    if not ordered:
         print("(无匹配文件)")
-    for path, size, mtime in rows[:int(args.max)]:
+    for path, size, mtime in ordered[:int(args.max)]:
         print(f"{path}\t{size} bytes\t{mtime}")
-    if len(rows) > int(args.max):
-        print(f"(共 {len(rows)} 个文件，已按 --max 截断)")
+    if len(ordered) > int(args.max):
+        print(f"(共 {len(ordered)} 个文件，已按 --max 截断，显示最新 {args.max} 个)")
 
 def cmd_node_exec(args) -> None:
     node_ip = lib.resolve_node_ip(args.node)
@@ -673,6 +795,8 @@ def cmd_node_exec(args) -> None:
     stderr = (out.stderr or "").strip()
     if stderr:
         sys.stderr.write(stderr + "\n")
+    if (out.returncode or 0) != 0:
+        sys.exit(1)
 
 
 def cmd_nsenter_net(args) -> None:
@@ -687,6 +811,8 @@ def cmd_nsenter_net(args) -> None:
     stderr = (out.stderr or "").strip()
     if stderr:
         sys.stderr.write(stderr + "\n")
+    if (out.returncode or 0) != 0:
+        sys.exit(1)
 
 def cmd_pause_pid(args) -> None:
     node_ip = lib.resolve_node_ip(args.node)

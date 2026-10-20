@@ -1,9 +1,11 @@
 # 问题排查报告 / Troubleshooting Report
 
+> 本模板适用于**根因 / 故障类**任务（定位为什么出错）。若任务是**行为确认型实验**（确认某行为在运行时是否发生），请改用 `templates/behavior-confirmation.md`。
 > 配合 `troubleshooting` skill 使用。填写约定：
 > - 结论必须区分 **【已证实】**（日志原文 / 对应版本代码）与 **【推测】**（依赖环境或配置，待证实）。
 > - 场景③（客户问题）**严禁连接任何环境**；所有环境访问只通过 `scripts/`。
 > - 证据标注来源位置：日志取自哪个 pod/节点/时间；代码取自哪个组件 / tag / 文件:行号。
+> - 实际执行了写操作时，必须填写「修复执行记录」（只经 `scripts/apply.py`），复验结果回填「验证步骤」表。
 
 ---
 
@@ -74,11 +76,32 @@
 
 ---
 
-## 验证步骤 / Verification
+## 修复执行记录 / Remediation Execution Record
 
-1. 【验证命令】`<命令，如：python3 scripts/logs.py logs <component> --since 15m --grep "ERROR">` — 预期：<……>
-2. 【验证命令】`<命令，如：python3 scripts/connect.py 应见 BASTION_OK + KUBECTL_OK>` — 预期：<……>
-3. 【验证命令】`<回归验证 / 相邻版本 diff 验证>` — 预期：<……>
+> 只有实际执行了写操作才填写（纯建议不填）。写操作只经 `scripts/apply.py`（白名单 + T1/T2R/T2U/T3 授权分层 + 强制先备份，见 SKILL.md 安全红线）；复验用 `scripts/verify.py`，闭环流程见 `modes/env-debug.md` 第三段。
+
+| # | 时间 | 通道 | 命令（apply.py 原样） | 层级 | 授权人/方式 | 备份文件 | 执行结果 | 复验结果 | 回滚 |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | <HH:mm> | kubectl | `apply.py kubectl delete pod <pod> -n <ns>` | T2R | 独占测试集群/免授权 | `<backup_dir>/<ts>-kubectl-*.yaml` | `WRITE_APPLIED` | `PASS`（verify.py） | 不需要 |
+| 2 | <HH:mm> | db | `apply.py --confirm --confirm-by <授权人> db --snapshot "SELECT ..." <pod> "UPDATE ..."` | T2U | <用户显式确认> | `<backup_dir>/<ts>-db-*.snap` | `WRITE_APPLIED` | `FAIL→ROLLBACK_APPLIED→PASS` | `apply.py rollback <备份>` |
+
+- 备份目录：`config.remediation.backup_dir`（缺省 `~/.cache/troubleshooting-backup`，权限 700）。
+- node / db 通道无自动回滚：按备份内的 `--snapshot` 快照手工恢复，并在此记录恢复过程。
+- 拿不准层级 → 按 T2U 处理（先要授权再执行）；T3（控制面 namespace 删除、批量 delete、`DROP DATABASE` 等）任何授权不可覆盖。
+
+---
+
+## 验证步骤 / Verification（可执行验证表）
+
+> 每条都可直接粘贴执行；批量断言用 `python3 scripts/verify.py --file checks.yaml`，逐条输出 PASS/FAIL（全部 PASS 才收尾）。
+> 「结果」列由执行人回填：`PASS` / `FAIL`（FAIL 时按 env-debug.md 第三段回滚后重验，把回滚动作记入「修复执行记录」）。
+
+| # | 验证命令（可粘贴执行） | 期望（PASS 条件） | 结果 |
+|---|---|---|---|
+| 1 | `python3 scripts/logs.py logs <component> --since 15m --grep "ERROR"` | 无新增 ERROR（或命中数为 0） | <PASS/FAIL> |
+| 2 | `python3 scripts/connect.py` | `BASTION_OK` + `KUBECTL_OK` | <PASS/FAIL> |
+| 3 | `python3 scripts/verify.py --file <checks.yaml>` | `status=VERIFY_PASS` | <PASS/FAIL> |
+| 4 | <回归验证 / 相邻版本 diff 验证，如 `git diff <tagA> <tagB> -- <file>`> | <……> | <PASS/FAIL> |
 
 ---
 
@@ -111,3 +134,6 @@
 - [ ] NOT_FOUND 时未用 nearby 相近版本自行替换，已请用户确认
 - [ ] 涉及特定版本时，代码取自对应 worktree，而非本地当前分支
 - [ ] 缺失信息已明确列出，未编造看似合理的根因
+- [ ] 写操作均经 `scripts/apply.py`，且执行前已有备份文件落盘（kubectl 自动 / node/db 显式 --snapshot）
+- [ ] T2U 写操作有显式授权记录（授权人/方式写入备份头与修复执行记录）；T3 未被尝试
+- [ ] 复验结果 PASS（verify.py）；FAIL 已回滚并重验，或已停下汇报未反复试错

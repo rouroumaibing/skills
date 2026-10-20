@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """SSH 免密配置与分发工具 (setup_ssh.py)。
 
-本脚本是 troubleshooting skill 里**唯一允许写操作**的配置工具（其余 scripts/ 均为只读排查脚本），
+本脚本是 troubleshooting skill 里**配置期**的写工具（排查 scripts/ 均为只读；运行期唯一写入口是
+`scripts/apply.py`，受写命令白名单 / T1/T2R/T2U/T3 授权分层 / 强制先备份约束），
 由运维人员在自己的终端手动运行，用于一次性把两类免密配好：
 
   1) 本机  -> 跳板机        子命令 ``local``
@@ -143,8 +144,10 @@ def ensure_local_key() -> str:
         serialization.PublicFormat.OpenSSH,
     ).decode().strip()
     public_line = f"{public_body} {_key_comment()}"
-    PRIVATE_KEY.write_bytes(private_bytes)
-    os.chmod(PRIVATE_KEY, 0o600)
+    # 私钥落盘一步到位 0600：先写后 chmod 会留下一个全局可读的窗口
+    fd = os.open(str(PRIVATE_KEY), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(private_bytes)
     PUBLIC_KEY.write_text(public_line + "\n", encoding="utf-8")
     os.chmod(PUBLIC_KEY, 0o644)
     return public_line
@@ -385,6 +388,8 @@ def cmd_status(args) -> None:
         rows.append(("跳板机已信任本机公钥", "OK" if trusted else "NO", "authorized_keys"))
 
     for node in args.nodes:
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", node):
+            die(f"节点标识不合法: {node}")
         result = lib.execute_on_node(node, "true", check=False)
         ok = result is not None and result.returncode == 0
         rows.append((f"跳板机 -> 节点 {node}", "HOP_OK" if ok else "HOP_FAIL",
@@ -417,7 +422,7 @@ def cmd_export_bundle(args) -> None:
     stamp = time.strftime("%Y%m%d-%H%M%S")
     remote_tar = f"/tmp/ts-bastion-key-{stamp}.tar.gz"
 
-    make = ("set -e; "
+    make = ("set -e; umask 077; "
             'if [ ! -f ~/.ssh/id_ed25519 ]; then echo "status=NO_KEY 跳板机还没有密钥，'
             '请先运行 bastion 子命令"; exit 3; fi; '
             f"tar -czf {remote_tar} -C ~/.ssh id_ed25519 id_ed25519.pub && sha256sum {remote_tar}")
@@ -431,6 +436,8 @@ def cmd_export_bundle(args) -> None:
         sftp = client.open_sftp()
         sftp.get(remote_tar, args.out)
         sftp.close()
+        # 包内是共享私钥：本地落盘立即收紧权限，不赌 umask
+        os.chmod(args.out, 0o600)
         _exec(client, f"rm -f {remote_tar}", timeout=15)
     except (paramiko.SSHException, socket.timeout, OSError) as exc:
         die(f"导出失败（{target}）: {exc}")
