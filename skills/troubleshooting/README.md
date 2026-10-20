@@ -18,7 +18,7 @@
        components-2:
          path: ~/work/xxx
          aliases: [订单, order]      # 可用别名匹配组件
-         selector: app=order-svc     # 覆盖 pod label，缺省回退 app=<组件名>
+         selector: app=order-svc     # 覆盖 pod label，优先级最高；未配置时按通用标签键 app=/k8s-app=/component= 依次尝试，再按 pod 名称子串兜底（平台无关）
        ```
    - `worktree.workdir`：客户报版本时只读 worktree 的工作目录。
 2. **可选覆盖键**（不写则用默认值，保持 config 极简）：
@@ -26,6 +26,9 @@
    - `conn.namespace` / `conn.context`：跳板机 kubectl 的 namespace / context，缺省用跳板机当前。注意：`logs.py` 的查询默认 `-A` 全 namespace 发现，`-n <ns>` 显式收窄优先，业务 pod 不在 default namespace 也**无需**再配 `namespace`。
    - `conn.scan_dirs`：节点日志**扫描目录集**（发现面默认开放、读取面按此收敛），缺省为 `/var/log`、`/var/log/pods`、`/var/log/containers`、`/data/logs`、`/var/lib/kubelet`。`node-log` 的读取路径与 `node-find` 的搜索范围都受此集约束；**集外路径确需读取时用 `node-log --any-path` 显式越界**（必回显告警，可审计）。收窄此集即可收紧边界；**敏感日志目录（secure / audit 等）请勿列入**，避免内容进入模型上下文。
    - `conn.connect_timeout` / `conn.probe_timeout` / `conn.cache_ttl` / `conn.request_timeout`：SSH 连接超时、私网可达性探测超时、私网 IP 缓存有效期、kubectl `--request-timeout`（单位秒）。默认值分别为 `10` / `5` / `300` / `10`，可按网络环境调整。
+   - `remediation.backup_dir`：apply.py 写操作的备份目录（本地，自动创建，权限 700），缺省 `~/.cache/troubleshooting-backup`。
+   - `remediation.shared_cluster`：`true` = 共享/近生产集群，T2R 写操作也需 `--confirm` 显式授权；缺省 `false`（独占测试集群，T2R 先备份后执行即可）。
+   - `remediation.write_whitelist`：可选，按通道（kubectl/node/db）**整体覆盖**内置写命令白名单（结构化声明条目，非正则；kubectl 条目 `{verb, kind, tier[, sub][, flags]}`、node 条目 `{cmd, tier[, subs]}`、db 条目 `{keyword, tier}`，字段语义见 `scripts/apply.py` 文件头 docstring）。T3 反模式（控制面 namespace 删除、`--all` 批量删除、`rm -r`、`DROP DATABASE`/GRANT/REVOKE 等）由脚本内置结构判断兜底拒绝，config 覆盖不影响。
 3. **不要写任何密码**。认证靠 SSH 公钥免密，用 `scripts/setup_ssh.py` 一键配置（**幂等，可重复运行**；传输走 Paramiko，无需本机 OpenSSH / `~/.ssh/config`）：
    - `python3 scripts/setup_ssh.py local`：本机 → 跳板机。生成个人密钥（若无，cryptography 生成 OpenSSH 格式）、把公钥**追加**到跳板机 `authorized_keys`。首次可能需输入一次跳板机密码（仅交互终端）。
    - `python3 scripts/setup_ssh.py bastion`：跳板机 → 节点。在跳板机上确保共用密钥存在，并把其公钥**追加**到各节点（缺省用 `kubectl` 自动发现，或 `--nodes <ip...>` 指定）。
@@ -71,13 +74,13 @@ ssh root@<节点IP> true                             # 验证免密
 - 但 `D:\xxx` 这类 Windows 盘符路径在 **Git Bash** 需写成 `/d/xxx`、**WSL** 需写成 `/mnt/d/xxx`；macOS 上则用实际 Unix 路径（如 `~/work/xxx`）。`codehub` 的路径必须是**运行本 skill 的机器上有效的本地路径**。
 
 ## 5. 安全建议（重要）
-- 本 skill 的脚本全部只读，但跳板机/节点均以 `root` 登录，**root 本身不构成只读边界**。建议为跳板机建一个专用只读账号，或用 `conn.scan_dirs` 把可读范围收窄到业务日志目录。
+- 本 skill 的**排查脚本全部只读**；唯一运行期写入口是 `scripts/apply.py`（kubectl / node / db 三通道），受三重约束：写命令白名单（config.remediation.write_whitelist，T3 反模式最先评估、任何授权不可覆盖）→ T1/T2R/T2U/T3 授权分层（T2U 及共享集群的 T2R 需 `--confirm`，`--confirm-by` 留痕进备份头）→ 强制先备份（kubectl 通道自动 `get -o yaml`，node/db 通道强制 `--snapshot` 只读快照；备份失败不执行）。复验用 `scripts/verify.py`（只允许调只读脚本，逐条输出 PASS/FAIL）；复验不过用 `apply.py rollback <备份>` 回滚（kubectl 通道自动，node/db 按快照手工恢复）。即便如此，跳板机/节点均以 `root` 登录，**root 本身不构成只读边界**——建议为跳板机建一个专用只读账号，或用 `conn.scan_dirs` 把可读范围收窄到业务日志目录。
 - 节点日志路径若指向软链接，`root` 下 `tail` 会跟随链接读到目录外文件。脚本已在节点上用 `readlink -f` 解析真实路径后**重新校验**扫描目录集；`node-log --any-path` 是唯一显式越界开关，每次使用都回显告警——安全叙事从「防止」变为「透明可审计」，请在只连开发/测试环境的前提下使用。
 - `node-exec` 按场景（node / network / pod）白名单放行只读诊断命令（`df`/`free`/`ss`/`iptables -L`/`dig`/`crictl` 等），白名单外一律在本地拒绝，不产生 SSH 往返；参数亦按命令逐条白名单校验（如 `iptables` 只允许 `-L`/`-S` 列出，`ping` 限 `-c 1-5`）。
 - `nsenter-net <node> <pid> <cmd...>`：从节点进入容器（或 pause 容器）网络命名空间执行 network 白名单内的只读命令，用于精简镜像无 shell、业务容器 crash、NetworkPolicy 容器视角验证三类场景。复合门设计：PID 仅接受纯数字，`-t <pid> -n` 构型由脚本拼装（无法注入 `-m` 等其他 ns flag），内部命令复用 network 白名单。注意 `/etc/resolv.conf` 属 mount ns 不会切换，复现容器 DNS 需显式 `dig @<clusterDNS>`。
 - `pause-pid <node> [--name POD] [--namespace NS]`：自动探测节点容器运行时（先试 crictl/containerd，失败回退 docker shim）并返回 pause 容器宿主机 PID（`runtime=... pid=...`）。运行时→工具的选择在脚本内以 Python 变量完成——paramiko 每次 `execute_on_node` 都是全新 shell，远端环境变量无法跨调用存活，shell 组合命令又会绕过 allow-list。多个 pause 容器时列出让用户用 `--name`/`--namespace` 收窄；手动回退链（crictl pods → inspectp / docker ps → inspect）见 network.md。
 - 私网探测结果会缓存到 `~/.cache/troubleshooting-bastion/`（权限 700）。脚本只信任缓存里等于 `conn.public-ip` / `conn.private-ip` 的 IP，其余一律丢弃并重探，避免同机其他用户伪造缓存把流量引到假跳板机。
-- 本 skill **没有 production 确认门（protected）**。请只把它指向开发/测试跳板机；若必须连生产，调用前请自行确认，或在 SKILL.md / lib.py 重新加回 `protected` 确认逻辑。
+- 本 skill **没有 production 确认门（protected）**。请只把它指向开发/测试跳板机；若必须连生产，调用前请自行确认（连生产属 T2「显式确认后放行」）。
 
 ## 6. 验收
 1. `python3 scripts/setup_ssh.py status` 全 OK（或 `scripts/connect.py` → BASTION_OK / KUBECTL_OK）
@@ -87,4 +90,9 @@ ssh root@<节点IP> true                             # 验证免密
    - 下钻：`scripts/logs.py logs <component> --since 15m --grep ERROR --context 3`（默认跨 ns；试 `-n <ns>` 与 `--pod <name>` 收窄）
    - 节点：`scripts/logs.py node-find <node> --name "*.log" --newer 1h` 拿到文件后 `node-log <node> <文件>`；`describe-node <node>`；`node-exec --scenario node <node> df -h`
 4. `scripts/resolve_version.py --list`，再解析一个真实组件和版本
-5. 回放测试：拿一个已解决的客户问题，只给组件、版本和报错，看能否定位到当时的代码位置
+5. 修复-验证闭环冒烟（不产生任何真实写操作）：
+   - `python3 scripts/apply.py --dry-run kubectl delete pod <不存在的名字> -n <ns>` → `DRY_RUN`（T2R 计划输出）
+   - `python3 scripts/apply.py --dry-run kubectl delete ns kube-system` → `TIER_T3_FORBIDDEN`（本地拒绝）
+   - `python3 scripts/apply.py --dry-run node <node> systemctl restart kubelet` → `SNAPSHOT_REQUIRED`
+   - `python3 scripts/verify.py --cmd "connect.py" --expect BASTION_OK` → `PASS`
+6. 回放测试：拿一个已解决的客户问题，只给组件、版本和报错，看能否定位到当时的代码位置

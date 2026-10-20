@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """SSH 免密配置与分发工具 (setup_ssh.py)。
 
-本脚本是 troubleshooting skill 里**唯一允许写操作**的配置工具（其余 scripts/ 均为只读排查脚本），
+本脚本是 troubleshooting skill 里**配置期**的写工具（排查 scripts/ 均为只读；运行期唯一写入口是
+`scripts/apply.py`，受写命令白名单 / T1/T2R/T2U/T3 授权分层 / 强制先备份约束），
 由运维人员在自己的终端手动运行，用于一次性把两类免密配好：
 
   1) 本机  -> 跳板机        子命令 ``local``

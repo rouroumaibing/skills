@@ -22,7 +22,7 @@ All skills in this repository. Click links for full documentation.
 | [`harness-workflow`](skills/harness-workflow/SKILL.md) | AI 研发审计 skill：对产物对照目标契约与规则登记表做检查，出具带证据的审计报告（缺口 + 证据 + 修改建议 + 由谁决策），工程未实装时如实标注降级；检查器覆盖契约锁定与禁用词、范围越界与禁止项、风险下限推算、AI 可写区、证据包绑定、追溯矩阵断链、红绿顺序等；修改建议逐条附对抗推演与可信度分级（内置对抗推演案例库），报告归档到被审项目 audits/ 台账；不修改被审产物、只报不改，不做强制、不管合入、不引用或修改任何其它 skill | `审计` `审查` `检查对否` `artifact 校验` `契约核查` `证据核对` `缺口清单` `防 AI 虚报` `目标契约` `规则登记表` `升级触发清单` `对抗推演` `human-in-the-loop` `先定契约再动手` |
 | [`quick-note`](skills/quick-note/SKILL.md) | 双层决策留痕：写实现代码时顺手追加 breadcrumbs（选择/原因/备选/状态），用户或 AI 拍板、推翻方案时生成编号正式 ADR，两层以取代链互连，把"当初为什么这么写 → 后来为什么改"留成可追溯链条；落点先判顺序、命中即停（使用者显式指定 → 记录根下已有 `docs/` → 复用仓内其它 ADR 目录 → 新建），复用既有目录时跟随其编号/命名/字段/索引约定，支持多仓并列的工作区根，落点不在版本控制内时先说明再写 | `记录决策` `顺手记` `留痕` `为什么要这么写` `ADR` `决策记录` `记录到某目录` `决策写进某目录` `breadcrumbs` `@quick-note` |
 | [`clean-change-comments`](skills/clean-change-comments/SKILL.md) | 修改代码注释与文档正文时强制只描述当前状态、禁止变更叙述（原来是/改为/不再/已废弃/禁止xxx改用xxx）；变更历史进变更记录/commit，方案选型进决策记录；仅允许「防回退说明」与「非直觉业务规则/外部约束」两类一行注释；附变更叙述扫描脚本，用于清理已有文件中的残留 | `清理注释` `整理注释` `删掉变更叙述` `只描述现状` `注释规范` `变更记录` `决策记录` `提交前自查注释` `顺手清理残留注释` `@clean-change-comments` |
-| [`troubleshooting`](skills/troubleshooting/SKILL.md) | 排查问题统一入口：连开发/测试环境查 pod/节点/机器日志、在多个本地代码库查代码、按客户报错与软件版本切换到对应版本代码定位问题（通常无法连客户环境）；三场景分流、证据分级（已证实/推测）、只读脚本与受保护环境确认 | `排查问题` `定位问题` `查日志` `查 pod` `客户报错` `版本定位` `多仓库查代码` `troubleshooting` |
+| [`troubleshooting`](skills/troubleshooting/SKILL.md) | 排查问题统一入口：连开发/测试环境查 pod/节点/机器日志、在多个本地代码库查代码、按客户报错与软件版本切换到对应版本代码定位问题（通常无法连客户环境）；三场景分流、证据分级（已证实/推测）、只读脚本与受保护环境确认；修复写操作只经 apply.py（白名单 + T1/T2R/T2U/T3 授权分层 + 强制备份，覆盖 kubectl/SSH/DB），verify.py 复验 PASS/FAIL、不过回滚 | `排查问题` `定位问题` `查日志` `查 pod` `客户报错` `版本定位` `多仓库查代码` `修复回滚` `troubleshooting` |
 | [`skill-freshness-audit`](skills/skill-freshness-audit/SKILL.md) | 审计 skill 库的新鲜度 / 冗余 / 事实性过期：按 0→1 私有知识（persist）/ 1→100 流程代偿（sunset 候选）/ 治理边界（never-remove）分类，附可追溯行号证据；建议型，绝不自动修改 / 删除 / 下线任何 skill | `审计skill库` `检查skill是否过时` `skill保质期` `哪些skill冗余` `skill特有性检查` `生成skill审计清单` |
 
 ## 开发规范 / Development Guide
@@ -38,5 +38,5 @@ All skills in this repository. Click links for full documentation.
 ### 新增 Skill
 
 1. 创建目录 `skills/<skill-name>/`
-2. 编写 `SKILL.md`（遵循上述 4 条规范）
+2. 编写 `SKILL.md`（遵循上述 5 条规范）
 3. 更新本文件 Skills 索引表格

@@ -1,12 +1,14 @@
 # 场景①：连跳板机查问题（可主动取证）
 
-## 总流程：问题驱动两段式
+## 总流程：问题驱动两段式（+ 修复验证闭环）
 
 排障一定始于一个具体问题（报错/告警/现象），问题自带锚点（关键字/组件/节点/容器）。
 **不要无前提全量拉取，也不要把收敛成本推给用户反复追问。**
 
 ```
 线索抽取 → 第一段·全量发现（无边界）→ 第二段·精确下钻（有边界）→ 证据→新线索→迭代
+                                                              ↓（定位根因、需动手修时）
+                                        第三段·修复-验证闭环（授权→备份→执行→复验→不通过回滚）
 ```
 
 ### 0. 线索抽取（显式回显）
@@ -45,6 +47,40 @@
 
 ### 4. 迭代
 每次取证后用一两句话说明发现了什么；新证据产生新线索（新组件/新节点/新关键字）时，回到第 1 段。
+
+### 5. 第三段·修复-验证闭环（授权→备份→执行→复验→不通过回滚）
+定位到根因、**需要动手修时**才进入本段；取证阶段不要提前动手。所有写操作（kubectl / node / db 三通道）只经 `scripts/apply.py` 一个入口，复验只经 `scripts/verify.py`：
+
+```
+授权判定 → 备份 → 执行(apply.py) → 复验(verify.py) → PASS 收尾 / FAIL 回滚(apply.py rollback) → 再复验
+```
+
+1. **授权判定**（按 SKILL.md 安全红线 T1/T2R/T2U/T3 分层，覆盖所有写通道）：
+   - T1（建自清理测试/对照资源）→ 默认放行；
+   - T2R（删测试 pod / scale / rollout restart / patch label / `systemctl restart <unit>`…）→ 独占测试集群不需单独授权，但强制先备份；`remediation.shared_cluster=true` 的共享/近生产集群需用户显式确认；
+   - T2U（删数据 PVC/PV、集群级 RBAC/CRD/NS、文件 rm/truncate、任何写 SQL…）→ 需用户显式授权（`--confirm`，`--confirm-by <授权人>` 留痕）；
+   - 拿不准 → T2U；T3 一律拒绝（apply.py 本地即拒，不产生连接）。
+2. **备份**（强制前置，备份失败就不执行）：
+   - kubectl 通道：apply.py 自动 `kubectl get -o yaml` 存到 `remediation.backup_dir`（目标不存在则记 absent，回滚=删除该对象）；
+   - node/db 通道：必须显式带 `--snapshot "<只读命令/SELECT>"`，输出随备份存盘（快照命令本身也受只读白名单约束）。
+3. **执行**：先 `--dry-run` 看计划（白名单/层级/备份目标/快照），再实跑：
+   - `python3 scripts/apply.py --dry-run kubectl delete pod <pod> -n <ns>`
+   - `python3 scripts/apply.py kubectl delete pod <pod> -n <ns>`（T2R：自动备份后执行）
+   - `python3 scripts/apply.py node --snapshot "systemctl status kubelet" <node> systemctl restart kubelet`（T2R；`--snapshot` 须在 `<node>` 前）
+   - `python3 scripts/apply.py --confirm --confirm-by <授权人> db --snapshot "SELECT * FROM t WHERE ..." <db-pod> "UPDATE t SET ..."`
+   - 白名单外命令本地即拒（`NOT_WHITELISTED`），不要换写法绕过；T3 直接停。
+4. **复验**：`python3 scripts/verify.py --file checks.yaml`（或单条 `--cmd "logs.py logs <component> --since 5m --grep ERROR" --expect-not ERROR`），逐条输出 PASS/FAIL；断言命令同样只走 `scripts/` 只读脚本。**断言要求数据行特征**（如带随机后缀的 pod 名 `smoke-xxx-[a-z0-9]{5}`、状态值 `Running`），不要用会出现在 `status=NO_PODS` 等状态行里的宽泛子串（如组件名本身），否则资源不存在时也会假阳性 PASS。checks.yaml 示例：
+   ```yaml
+   checks:
+     - id: pod-running
+       cmd: logs.py pods <component> -o wide
+       expect: Running
+     - id: no-new-errors
+       cmd: logs.py logs <component> --since 5m --grep ERROR
+       expect-not: ERROR
+   ```
+5. **不通过回滚**：`python3 scripts/apply.py --confirm rollback <备份文件>`（`--confirm` 是全局参数，须放在 `rollback` 之前；kubectl 通道自动还原：absent→删除、有 YAML→apply 还原；rollback 本身按 T2U 需 `--confirm`，且回滚前会再备份当前态）。node/db 通道无自动回滚——按备份里的快照手工恢复，并把恢复过程如实记入报告「修复执行记录」。
+6. **闭环判据**：复验全部 PASS 才收尾；FAIL → 回滚 → 再复验；仍 FAIL 停下汇报，**不得反复试错**。执行与复验结果写入 `templates/troubleshooting.md` 的「修复执行记录」与「验证步骤」表。
 
 ## 人机协作
 - 简单问题 Agent 自动跑完给结论；复杂问题用户可随时插话改道，**Agent 不得以流程没走完为由拒绝转向**。

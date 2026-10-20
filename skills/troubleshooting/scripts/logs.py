@@ -237,6 +237,51 @@ def _pods_matching(selector: str, namespace: str) -> list[tuple[str, str]]:
     return pairs
 
 
+# Generic label-key conventions, NOT a component whitelist: ecosystems differ
+# in which key they label pods with — workloads usually app=, daemon/infra
+# often k8s-app=, kubeadm/legacy control-plane component=.  No distribution
+# names are hardcoded; per-component quirks belong in config (codehub
+# [component].selector) or are caught by the name-substring fallback.
+_LABEL_KEYS = ("app", "k8s-app", "component")
+
+
+def _name_pairs(component: str, namespace: str) -> list[tuple[str, str]]:
+    """Platform-agnostic catch-all: pods whose *name* contains the component.
+
+    One full listing, matched client-side — works regardless of which label
+    scheme (or none) the distribution uses.
+    """
+    scope = ["-n", namespace] if namespace else ["-A"]
+    result = lib.run_kubectl("get", "pods", *scope,
+                             "-o", "jsonpath=" + _POD_PAIRS_JSONPATH,
+                             namespace="", capture=True)
+    pairs = []
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if "/" in line:
+            ns, _, name = line.partition("/")
+            if ns and name and component in name:
+                pairs.append((ns, name))
+    return pairs
+
+
+def _pods_for_component(component: str, namespace: str) -> tuple[list, str]:
+    """Resolve (namespace, pod) pairs for a component, platform-agnostically.
+
+    Order: config override -> generic label-key candidates -> name-substring.
+    Returns (pairs, how) where how describes what matched, e.g.
+    "selector=app=nginx" / "name-substring=kube-controller-manager".
+    """
+    override = lib.selector_override(component)
+    candidates = ([override] if override
+                  else [f"{key}={component}" for key in _LABEL_KEYS])
+    for sel in candidates:
+        pairs = _pods_matching(sel, namespace)
+        if pairs:
+            return pairs, f"selector={sel}"
+    return _name_pairs(component, namespace), f"name-substring={component}"
+
+
 def _resolve_pod(pod: str, namespace: str) -> tuple[str, str]:
     """Return (namespace, pod) for *pod*, searching all namespaces when none given."""
     if namespace:
@@ -513,28 +558,47 @@ def main() -> None:
 
 def cmd_pods(args) -> None:
     scope = ["-n", args.namespace] if args.namespace else ["-A"]
-    if args.component:
-        result = lib.run_kubectl("get", "pods", *scope, "-l",
-                                 lib.selector_for(args.component), "-o", "wide",
-                                 namespace="", capture=True)
-    else:
+    if not args.component:
         result = lib.run_kubectl("get", "pods", *scope, "-o", "wide",
                                  namespace="", capture=True)
-    print(result.stdout.rstrip())
+        print(result.stdout.rstrip())
+        return
+    override = lib.selector_override(args.component)
+    candidates = ([override] if override
+                  else [f"{key}={args.component}" for key in _LABEL_KEYS])
+    for sel in candidates:
+        result = lib.run_kubectl("get", "pods", *scope, "-l", sel, "-o", "wide",
+                                 namespace="", capture=True)
+        body = (result.stdout or "").strip()
+        if body and not body.lower().startswith("no resources"):
+            print(body)
+            return
+    pairs = _name_pairs(args.component, args.namespace)
+    if not pairs:
+        print(f"status=NO_PODS component={args.component} "
+              f"tried={','.join(candidates)}+name-substring "
+              f"namespace={args.namespace or 'ALL'}")
+        print("  已自动尝试 app=/k8s-app=/component= 标签键与 pod 名称子串；"
+              "组件 label 特殊时在 codehub 配 selector 覆盖")
+        return
+    print(f"(label 未命中，按 pod 名称子串 '{args.component}' 匹配，共 {len(pairs)} 个)")
+    for ns, name in pairs:
+        print(f"{ns}/{name}")
 
 def cmd_logs(args) -> None:
-    selector = lib.selector_for(args.component)
-    pairs = _pods_matching(selector, args.namespace)
+    pairs, how = _pods_for_component(args.component, args.namespace)
     if args.pod:
         pairs = [(ns, pod) for ns, pod in pairs if pod == args.pod]
     if not pairs:
-        print(f"status=NO_PODS component={args.component} selector={selector} "
-              f"namespace={args.namespace or 'ALL'}")
-        print("  已默认扫描全部 namespace；可用 -n <ns> 收窄，或检查 codehub 的 selector 配置")
+        print(f"status=NO_PODS component={args.component} "
+              f"matched_by={how}(0 hits) namespace={args.namespace or 'ALL'}")
+        print("  已默认扫描全部 namespace，并自动尝试 app=/k8s-app=/component= "
+              "标签键与 pod 名称子串；可用 -n <ns> 收窄，或检查 codehub 的 selector 配置。"
+              "托管控制面集群不下发控制面 Pod，此时 NO_PODS 属真阴性")
         sys.exit(1)
     if len(pairs) > MAX_PODS_PER_READ:
         print(f"status=TOO_MANY_PODS component={args.component} "
-              f"selector={selector} count={len(pairs)}")
+              f"matched_by={how} count={len(pairs)}")
         print(f"  匹配 pod 超过 {MAX_PODS_PER_READ} 个；"
               "用 --pod <name> 指定单个 pod，或 -n <ns> 收窄后再读日志")
         sys.exit(1)

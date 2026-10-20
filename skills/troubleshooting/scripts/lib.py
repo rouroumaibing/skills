@@ -388,10 +388,14 @@ def _safe_close(client: "paramiko.SSHClient") -> None:
 
 
 def _exec_once(client: "paramiko.SSHClient", target: str, remote_command: str,
-               timeout: int, capture: bool) -> _Result:
+               timeout: int, capture: bool, stdin_data: str | None = None) -> _Result:
     """Run one exec_command round-trip, recording the wall-clock duration."""
     started = time.monotonic()
     _stdin, stdout, stderr = client.exec_command(remote_command, timeout=timeout + 5)
+    if stdin_data:
+        _stdin.write(stdin_data)
+        _stdin.flush()
+        _stdin.channel.shutdown_write()  # signal EOF so remote readers unblock
     out = stdout.read().decode("utf-8", "replace")
     err = stderr.read().decode("utf-8", "replace")
     returncode = stdout.channel.recv_exit_status()
@@ -401,7 +405,8 @@ def _exec_once(client: "paramiko.SSHClient", target: str, remote_command: str,
 
 
 def run_ssh(target: str, remote_command: str, *, timeout: int = DEFAULT_CONNECT_TIMEOUT,
-            capture: bool = True, check: bool = True) -> _Result:
+            capture: bool = True, check: bool = True,
+            stdin_data: str | None = None) -> _Result:
     """Run *remote_command* on *target* (user@host) over Paramiko.
 
     Returns a CompletedProcess-like _Result. On auth failure it maps to
@@ -409,7 +414,9 @@ def run_ssh(target: str, remote_command: str, *, timeout: int = DEFAULT_CONNECT_
     A transport-level failure (SSHException/OSError — connection dropped
     between calls, NAT idle timeout) retries once after reconnecting;
     a command *timeout* is never retried, because the command may already
-    have started running on the remote side.
+    have started running on the remote side. ``stdin_data`` (if given) is
+    written to the remote process's stdin and EOF-signalled — used for
+    ``kubectl apply -f -`` style manifest piping.
     """
     try:
         client = get_client(target, timeout=timeout)
@@ -429,7 +436,8 @@ def run_ssh(target: str, remote_command: str, *, timeout: int = DEFAULT_CONNECT_
     while True:
         attempts += 1
         try:
-            return _exec_once(client, target, remote_command, timeout, capture)
+            return _exec_once(client, target, remote_command, timeout, capture,
+                              stdin_data=stdin_data)
         except (socket.timeout, TimeoutError):
             _close_client(target)
             sys.stderr.write(f"warn: 远端命令超时 {target}\n")
@@ -473,18 +481,20 @@ def bastion_target(conn: "Connection", host: str | None = None) -> str:
     return target
 
 
-def run_on_bastion(*command, timeout: int | None = None, capture: bool = True, check: bool = True):
+def run_on_bastion(*command, timeout: int | None = None, capture: bool = True, check: bool = True,
+                   stdin_data: str | None = None):
     """Run *command* on the bastion host (config.conn). Arguments are shell-quoted."""
     if _connection is None:
         die("load_connection() 未调用")
     timeout = timeout or _connection.connect_timeout
     remote = shlex.join(command)
     return run_ssh(bastion_target(_connection), remote,
-                   timeout=timeout, capture=capture, check=check)
+                   timeout=timeout, capture=capture, check=check,
+                   stdin_data=stdin_data)
 
 
 def run_kubectl(*args, namespace: str | None = None, timeout: int | None = None,
-                capture: bool = True, check: bool = True):
+                capture: bool = True, check: bool = True, stdin_data: str | None = None):
     """Run kubectl on the bastion, injecting --context when configured.
 
     ``namespace`` semantics:
@@ -499,7 +509,8 @@ def run_kubectl(*args, namespace: str | None = None, timeout: int | None = None,
     if ns:
         cmd += ["-n", ns]
     cmd += list(args)
-    return run_on_bastion(*cmd, timeout=timeout, capture=capture, check=check)
+    return run_on_bastion(*cmd, timeout=timeout, capture=capture, check=check,
+                          stdin_data=stdin_data)
 
 
 def resolve_node_ip(name: str) -> str:
@@ -533,12 +544,19 @@ def execute_on_node(node_ip: str, *command, timeout: int | None = None,
     return run_on_bastion("bash", "-c", hop, timeout=timeout, capture=capture, check=check)
 
 
-def selector_for(component: str) -> str:
-    """Pod label selector for a component: codehub[component].selector, else app=<component>."""
+def selector_override(component: str) -> str | None:
+    """Configured pod-label selector override for a component, else None.
+
+    Platform-agnostic on purpose: the skill carries NO built-in knowledge of
+    any distribution's component names or label conventions.  Callers fall
+    back to generic label-key candidates and a name-substring match (see
+    logs.py); per-component quirks, if any, belong in config (codehub
+    [component].selector), not in code.
+    """
     entry = (load_config().get("codehub", {}) or {}).get(component)
     if isinstance(entry, dict) and entry.get("selector"):
         return entry["selector"]
-    return f"app={component}"
+    return None
 
 
 # ----------------------------- git helpers (local) -----------------------------
