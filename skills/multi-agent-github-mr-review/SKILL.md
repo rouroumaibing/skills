@@ -1,7 +1,8 @@
 ---
 name: multi-agent-github-mr-review
-description: "触发词：@某agent+MR链接、GitHub MR 检视、PR review。10-phase adversarial code review pipeline producing line-level DiffNotes and blocking merge until closure."
-version: "1"
+description: "触发词：@某agent+MR链接、GitHub MR 检视、PR review、本地生成代码后自检、提交前代码审查。10-phase adversarial code review pipeline：对 GitHub MR 产出行级 DiffNote 并阻塞合入；无 MR 的本地自检场景，套用相同检查维度对本地 diff/分支审查并直接输出意见集。"
+metadata:
+  version: "1"
 ---
 
 # GitHub MR Review — 10 阶段全链路代码检视
@@ -13,6 +14,8 @@ version: "1"
 这不是"用 gh pr diff 看一眼"——是**双 agent 对抗式结构化代码审查**，产出可追溯的行级意见并阻塞合入直到闭环。
 和 multi-agent 内部 review 链的区别：内部链是 author 自驱（quality-gate → request-review → merge-gate）；
 本 skill 是**外部触发**（群里 @某agent+MR链接），检视对象是外部 MR，产出物是 MR 上的行级 DiffNote。
+
+**本地自检模式（无 GitHub MR 时）**：当用户在本地生成 / 修改代码后要求"提交前自检 / 代码审查"但无可贴 MR 链接，进入本地模式——Phase 1 改为识别本地 diff / 分支（`git diff <base>...HEAD` 替代 `gh pr diff`），Phase 3 套用相同检查维度产出意见集，Phase 6/7/10 的 GitHub 提交与群通知跳过、改为把意见集直接回给用户；其余对抗验证（Phase 4/5）不变。
 
 ## 10 阶段速查
 

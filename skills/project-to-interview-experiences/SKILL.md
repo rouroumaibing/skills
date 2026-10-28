@@ -1,7 +1,8 @@
 ---
 name: project-to-interview-experiences
 description: "触发词：项目转面试、面试备战、面试讲稿、面试经验。Converts project source into oral defensive interview handbook with STAR cases, trade-off matrix, and deep-dive Q&A."
-version: "1"
+metadata:
+  version: "1"
 ---
 
 # Project-to-Interview Experiences — 项目源码 → 面试备战手册
