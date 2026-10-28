@@ -250,6 +250,7 @@ def _pods_matching(selector: str, namespace: str) -> list[tuple[str, str]]:
     result = lib.run_kubectl("get", "pods", *scope, "-l", selector,
                              "-o", "jsonpath=" + _POD_PAIRS_JSONPATH,
                              namespace="", capture=True)
+    _die_on_fail(result, f"kubectl get pods -l {selector}")
     pairs = []
     for line in (result.stdout or "").splitlines():
         line = line.strip()
@@ -278,6 +279,7 @@ def _name_pairs(component: str, namespace: str) -> list[tuple[str, str]]:
     result = lib.run_kubectl("get", "pods", *scope,
                              "-o", "jsonpath=" + _POD_PAIRS_JSONPATH,
                              namespace="", capture=True)
+    _die_on_fail(result, "kubectl get pods")
     pairs = []
     for line in (result.stdout or "").splitlines():
         line = line.strip()
@@ -312,6 +314,7 @@ def _resolve_pod(pod: str, namespace: str) -> tuple[str, str]:
     result = lib.run_kubectl("get", "pods", "-A",
                              "-o", "jsonpath=" + _POD_PAIRS_JSONPATH,
                              namespace="", capture=True)
+    _die_on_fail(result, "kubectl get pods -A")
     for line in (result.stdout or "").splitlines():
         line = line.strip()
         if "/" in line:

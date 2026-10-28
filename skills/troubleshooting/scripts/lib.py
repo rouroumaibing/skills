@@ -278,28 +278,73 @@ class _ConnFailure(Exception):
     """Raised when a target cannot be reached or its host key changed."""
 
 
+def _load_kh_tolerant(hostkeys: "paramiko.hostkeys.HostKeys", path: str) -> None:
+    """逐行容错加载 known_hosts。
+
+    paramiko 原生 HostKeys.load 在首个不可解析行上抛异常中止，其后条目全部
+    丢失——坏行之后的 host 会被当成「首次连接」自动信任，主机密钥校验被静默
+    削弱（实测复现）。本函数逐行解析：坏行与 @cert-authority/@revoked 标记行
+    （合法 OpenSSH 语法但 paramiko 无法表示）跳过并逐行告警，其余条目照常生效。
+    """
+    from paramiko.hostkeys import HostKeyEntry
+
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for lineno, raw in enumerate(fh, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("@"):
+                sys.stderr.write(f"warn: {path}:{lineno} 为 @cert-authority/@revoked"
+                                 " 标记行，paramiko 不支持 CA 行，已跳过"
+                                 "（该行声明的 CA 信任不生效）\n")
+                continue
+            try:
+                entry = HostKeyEntry.from_line(line, lineno)
+            except Exception as exc:
+                sys.stderr.write(f"warn: {path}:{lineno} 解析失败已跳过: {exc}\n")
+                continue
+            if entry is not None:
+                # 与原生 load 同一落法；_entries 为 paramiko 私有属性，升级 paramiko 后需回归本场景
+                hostkeys._entries.append(entry)
+
+
 def make_ssh_client() -> "paramiko.SSHClient":
     """Return a configured-but-unconnected SSHClient.
 
-    Loads system + user known_hosts and sets AutoAddPolicy, giving accept-new
-    semantics: unknown hosts are added, but a changed key for a known host is
-    rejected via BadHostKeyException (not silently trusted).
+    Trust (read) comes from the user's default known_hosts, loaded LINE BY
+    LINE: paramiko's native load aborts at the first unparseable line and
+    silently loses every entry AFTER it, so a later host would be re-trusted
+    on first connect (key-mismatch detection silently disabled — verified
+    empirically). Unparseable lines and @cert-authority/@revoked markers
+    (valid OpenSSH syntax paramiko cannot represent) are skipped with a
+    per-line warning; all other entries load normally. AutoAdd saves go to a
+    skill-local known_hosts file, so the user's real file is NEVER rewritten
+    (paramiko's HostKeys.save would drop comments/blank lines and cannot
+    re-emit @cert-authority lines). Parse failures degrade to a warning,
+    never a crash.
     """
     client = paramiko.SSHClient()
     try:
-        client.load_system_host_keys()
-    except (paramiko.SSHException, OSError) as exc:
+        # 逐行容错加载（原生 load 首坏行即中止，其后条目全丢）；用户文件只读信任
+        _load_kh_tolerant(client._system_host_keys,
+                          os.path.expanduser("~/.ssh/known_hosts"))
+    except FileNotFoundError:
+        pass
+    except Exception as exc:  # InvalidHostKey(Exception) 不属 SSHException；降级为告警不崩溃
         sys.stderr.write(f"warn: 读取系统 known_hosts 失败: {exc}\n")
-    known_hosts = os.path.expanduser("~/.ssh/known_hosts")
+    kh_dir = os.path.join(os.path.expanduser("~/.cache"), "troubleshooting")
+    skill_hosts = os.path.join(kh_dir, "known_hosts")
     try:
-        if not os.path.isfile(known_hosts):
-            fd = os.open(known_hosts, os.O_WRONLY | os.O_CREAT, 0o600)
+        os.makedirs(kh_dir, exist_ok=True)
+        os.chmod(kh_dir, 0o700)
+        if not os.path.isfile(skill_hosts):
+            fd = os.open(skill_hosts, os.O_WRONLY | os.O_CREAT, 0o600)
             os.close(fd)
-        # load_host_keys（而非仅 load_system_host_keys）绑定文件名：
-        # AutoAddPolicy 新增的主机密钥会自动落盘，否则每次运行都是「首次信任」
-        client.load_host_keys(known_hosts)
-    except (paramiko.SSHException, OSError) as exc:
-        sys.stderr.write(f"warn: 读取/初始化 {known_hosts} 失败: {exc}\n")
+        # 新密钥只落本文件：不绑定落盘文件名，AutoAdd 会重写用户真实 known_hosts
+        client._host_keys_filename = skill_hosts
+        _load_kh_tolerant(client.get_host_keys(), skill_hosts)
+    except Exception as exc:
+        sys.stderr.write(f"warn: 读取/初始化 {skill_hosts} 失败: {exc}\n")
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     return client
 
@@ -581,9 +626,11 @@ def execute_on_node(node_ip: str, *command, timeout: int | None = None,
     inner = shlex.join(command)
     # user@host 整体 quote：未校验/未 quote 的 "IP" 会把 hop 命令拆散，
     # 构造的「IP」（如 1.2.3.4; id #）甚至能在跳板机上注入第二段命令
+
+    # 防回退：ConnectTimeout 勿改用 write_timeout——节点不可达时要干等 180s 才报错
     hop = ("ssh -o BatchMode=yes -o ConnectTimeout=%d "
            "-o StrictHostKeyChecking=accept-new %s %s"
-           % (timeout, shlex.quote(f"{_connection.user}@{node_ip}"),
+           % (_connection.connect_timeout, shlex.quote(f"{_connection.user}@{node_ip}"),
               shlex.quote(inner)))
     return run_on_bastion("bash", "-c", hop, timeout=timeout, capture=capture, check=check)
 

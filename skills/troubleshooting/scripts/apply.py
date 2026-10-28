@@ -16,8 +16,9 @@
                到字段的原因。config.remediation.write_whitelist 可按通道
                整体覆盖内置表（条目同为结构化声明，字段语义见同目录
                README.md 第 2 节；条目 verb 与实际命令严格比对）。
-  2. 授权分层  T1 默认放行 / T2R 先备份后执行（remediation.shared_cluster=true
-               时需 --confirm）/ T2U 需 --confirm 显式授权 / T3 一律拒绝。
+  2. 授权分层  T1 默认放行 / T2R 先备份后执行，缺省按共享集群处理需 --confirm
+               （独占测试集群在 config 显式设 remediation.shared_cluster: false
+               放宽）/ T2U 需 --confirm 显式授权 / T3 一律拒绝。
   3. 备份前置  kubectl 通道自动 `kubectl get -o yaml` 存盘（目标不存在记
                absent，回滚=删除）；node/db 通道必须显式 --snapshot <只读
                命令/SELECT>，输出随备份存盘。备份失败 => 不执行。
@@ -545,6 +546,18 @@ _DB_WRITE_KEYWORDS = {  # 首个关键字 -> (规则名, 层级)
     "TRUNCATE": ("sql-truncate", "T2U"),
 }
 _DB_SNAPSHOT_KEYWORDS = {"SELECT", "SHOW", "DESCRIBE", "DESC"}
+# 会话级只读只挡「写」：管理类/文件读取类副作用靠本黑名单，残余=需 superuser 的未知管理函数
+_DB_SNAPSHOT_SIDE_EFFECT = re.compile(
+    r"\bINTO\b|\bFOR\s+UPDATE\b|\bNEXTVAL\s*\(|\bSETVAL\s*\("
+    r"|\bDBLINK_|\bPG_TERMINATE_BACKEND\s*\(|\bPG_CANCEL_BACKEND\s*\("
+    r"|\bLO_(?:IMPORT|EXPORT|UNLINK|GET|PUT)\s*\("
+    r"|\bPG_READ_(?:FILE|BINARY)\s*\(|\bPG_LS_DIR\s*\("
+    r"|\bSET_CONFIG\s*\(|\bPG_SLEEP\s*\(|\bPG_ADVISORY_(?:LOCK|XACT_LOCK)\s*\("
+    r"|\bPG_RELOAD_CONF\s*\(|\bPG_STAT_RESET\s*\(|\bPG_SWITCH_WAL\s*\("
+    r"|\bPG_ROTATE_LOGFILE\s*\(|\bSLEEP\s*\(|\bGET_LOCK\s*\("
+    r"|\bRELEASE_LOCK\s*\(|\bLOAD_FILE\s*\("
+    r"|\bCOPY\b",
+    re.IGNORECASE)
 # EXPLAIN 被剔除：PostgreSQL 的 EXPLAIN ANALYZE 会真正执行目标语句，
 # 等于借快照通道绕过分层授权。
 
@@ -688,7 +701,13 @@ def backup_dir() -> str:
 
 
 def shared_cluster() -> bool:
-    return bool(remediation_cfg().get("shared_cluster"))
+    # 防回退：勿简化回 bool(cfg.get(k, True))——YAML 空值读作 None 会被静默放宽，缺省一律按共享集群（最保守）
+    v = remediation_cfg().get("shared_cluster")
+    if v is None:
+        return True
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "no", "0", "")
+    return bool(v)
 
 
 # ----------------------------- guards -----------------------------
@@ -700,9 +719,13 @@ def enforce_tier(tier: str, confirm: bool, confirm_by: str) -> None:
     need_confirm = tier == "T2U" or (tier == "T2R" and shared_cluster())
     if need_confirm and not confirm:
         why = ("T2U 破坏性·不可恢复" if tier == "T2U"
-               else "T2R 但 remediation.shared_cluster=true（共享/近生产集群）")
+               else "T2R（未在 config 显式声明 remediation.shared_cluster: false，"
+                    "缺省按共享/近生产集群处理）")
         print(f"status=NEEDS_AUTH_CONFIRM msg=该写操作属 {why}，需用户显式授权")
-        print("  请先向用户说明操作与影响，获同意后加 --confirm（--confirm-by <授权人> 留痕）重试")
+        print("  授权策略：T1 放行 / T2R 备份后执行（缺省需 --confirm）/ "
+              "T2U 需 --confirm / T3 一律拒绝")
+        print("  请先向用户说明操作与影响，获同意后加 --confirm（--confirm-by <授权人> 留痕）重试；"
+              "独占测试集群可在 config remediation 设 shared_cluster: false 放宽 T2R")
         sys.exit(1)
     if confirm and tier in ("T2U", "T2R") and not confirm_by:
         print("warn: 建议随 --confirm 提供 --confirm-by <授权人>，写入备份头供审计")
@@ -745,10 +768,12 @@ def check_snapshot(channel: str, snapshot: str, bind: tuple | None = None) -> No
         first = cmd.split()[0].upper()
         if ";" in cmd or first not in _DB_SNAPSHOT_KEYWORDS:
             lib.die(f"--snapshot 只允许单条只读 SQL（{_DB_SNAPSHOT_KEYWORDS}）: {cmd}")
-        if re.search(r"\bINTO\b|\bFOR\s+UPDATE\b|\bNEXTVAL\s*\(|\bSETVAL\s*\(",
-                     cmd, re.IGNORECASE):
-            lib.die(f"--snapshot 拒绝含写/锁副作用的 SQL"
-                    f"（INTO / FOR UPDATE / nextval / setval）: {cmd}")
+        if _DB_SNAPSHOT_SIDE_EFFECT.search(cmd):
+            lib.die(f"--snapshot 拒绝含写/锁/管理类副作用的 SQL"
+                    f"（INTO / FOR UPDATE / nextval|setval / dblink* / "
+                    f"pg_terminate|cancel|reload_conf|stat_reset|switch_wal / "
+                    f"lo_* / set_config / SLEEP / GET_LOCK / LOAD_FILE / "
+                    f"advisory lock / COPY）: {cmd}")
         return
     # node channel：token 逐形状比对；命中后校验快照目标与写目标绑定
     t = cmd.split()
@@ -876,6 +901,33 @@ def _targets_from_manifest(path: str) -> list[dict]:
     return targets
 
 
+# -f 是白名单的显式逃生通道（清单内容不进逐条校验）：凭据/权限/拓扑/准入类 kind 在此二次收口
+SENSITIVE_MANIFEST_KINDS = {
+    "SECRET", "SERVICEACCOUNT",
+    "ROLE", "CLUSTERROLE", "ROLEBINDING", "CLUSTERROLEBINDING",
+    "NAMESPACE", "RESOURCEQUOTA", "LIMITRANGE",
+    "VALIDATIONWEBHOOKCONFIGURATION", "MUTATINGWEBHOOKCONFIGURATION",
+    "VALIDATINGADMISSIONPOLICY", "VALIDATINGADMISSIONPOLICYBINDING",
+    "MUTATINGADMISSIONPOLICY", "MUTATINGADMISSIONPOLICYBINDING",
+    "APISERVICE", "CUSTOMRESOURCEDEFINITION", "CERTIFICATESIGNINGREQUEST",
+    "PERSISTENTVOLUME", "STORAGECLASS",
+    "PODSECURITYPOLICY",
+}
+
+
+def _assert_manifest_kinds(targets: list[dict], allowed: bool, path: str) -> None:
+    """拒绝 -f 清单内的敏感 kind，除非显式 --allow-sensitive-manifest。"""
+    hits = sorted({t["kind"] for t in targets
+                   if t["kind"].upper() in SENSITIVE_MANIFEST_KINDS})
+    if not hits or allowed:
+        return
+    print(f"status=SENSITIVE_MANIFEST_REJECTED msg=-f 清单含敏感 kind: "
+          f"{', '.join(hits)}（凭据/权限/拓扑类资源可放大写操作影响，需二次显式授权）: {path}")
+    print("  确认清单内容属实后，加 --allow-sensitive-manifest（连同 --confirm）重试；"
+          "或把非敏感资源拆分到单独清单")
+    sys.exit(1)
+
+
 def backup_kubectl(command: str, rule: str, tier: str, confirm_by: str,
                    targets: list[dict]) -> str:
     """Export current state of *targets*; return the backup file path.
@@ -928,11 +980,17 @@ def _db_exec_args(args, client_cmd: list[str]) -> list[str]:
     return argv
 
 
-def _db_client_cmd(args, sql: str) -> list[str]:
+def _db_client_cmd(args, sql: str, read_only: bool = False) -> list[str]:
     """Assemble the remote client command for psql/mysql (no password flags —
-    authentication relies on the pod-side trust/secret mount, never on config)."""
+    authentication relies on the pod-side trust/secret mount, never on config).
+
+    read_only=True（快照专用）强制会话级只读：psql 走
+    default_transaction_read_only=on，mysql 走 SESSION TRANSACTION READ ONLY
+    ——首关键字是 SELECT 不代表无副作用，这是白名单之外的第二道闸。
+    """
     if args.client == "psql":
-        cmd = ["psql"]
+        cmd = (["env", "PGOPTIONS=-c default_transaction_read_only=on", "psql"]
+               if read_only else ["psql"])
         if args.user:
             cmd += ["-U", args.user]
         if args.database:
@@ -940,6 +998,8 @@ def _db_client_cmd(args, sql: str) -> list[str]:
         cmd += ["-c", sql]
     else:
         cmd = ["mysql"]
+        if read_only:
+            cmd += ["--init-command=SET SESSION TRANSACTION READ ONLY"]
         if args.user:
             cmd += ["-u", args.user]
         if args.database:
@@ -978,6 +1038,8 @@ def cmd_kubectl(args) -> int:
     enforce_tier(tier, args.confirm, args.confirm_by)
     if info.get("manifest"):
         targets = _targets_from_manifest(info["manifest"])
+        _assert_manifest_kinds(targets, args.allow_sensitive_manifest,
+                               info["manifest"])
     else:
         targets = [{"kind": info["kind"], "name": info["name"], "ns": info["ns"]}]
     if args.dry_run:
@@ -1074,7 +1136,7 @@ def cmd_db(args) -> int:
     enforce_tier(tier, args.confirm, args.confirm_by)
     check_snapshot("db", args.snapshot)
     write_cmd = _db_client_cmd(args, sql)
-    snap_cmd = _db_client_cmd(args, args.snapshot)
+    snap_cmd = _db_client_cmd(args, args.snapshot, read_only=True)
     if args.dry_run:
         _print_plan("db", f"{args.client} -c/e {sql}", tier, info["rule"],
                     [{"kind": "pod", "name": args.pod, "ns": args.namespace}],
@@ -1233,6 +1295,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="T2U（或共享集群的 T2R）所需的显式授权标记")
     parser.add_argument("--confirm-by", default="",
                         help="授权人留痕（写入备份头，供审计）")
+    parser.add_argument("--allow-sensitive-manifest", action="store_true",
+                        help="允许 -f 清单包含 Secret/RBAC/Namespace 等敏感 kind（默认拒绝）")
     sub = parser.add_subparsers(dest="channel", required=True)
 
     p = sub.add_parser("kubectl", help="kubectl 写命令（集群通道）")

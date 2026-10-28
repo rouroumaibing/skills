@@ -57,7 +57,7 @@
 
 1. **授权判定**（按 SKILL.md 安全红线 T1/T2R/T2U/T3 分层，覆盖所有写通道）：
    - T1（建自清理测试/对照资源）→ 默认放行；
-   - T2R（删测试 pod / scale / rollout restart / patch label / `systemctl restart <unit>`…）→ 独占测试集群不需单独授权，但强制先备份；`remediation.shared_cluster=true` 的共享/近生产集群需用户显式确认；
+   - T2R（删测试 pod / scale / rollout restart / patch label / `systemctl restart <unit>`…）→ 缺省按共享集群处理需 `--confirm` 显式授权（首次拒绝输出会带完整授权策略）；独占测试集群在 config `remediation.shared_cluster: false` 放宽为不需单独授权，但强制先备份；
    - T2U（删数据 PVC/PV、集群级 RBAC/CRD/NS、文件 rm/truncate、任何写 SQL…）→ 需用户显式授权（`--confirm`，`--confirm-by <授权人>` 留痕）；
    - 拿不准 → T2U；T3 一律拒绝（apply.py 本地即拒，不产生连接）。
 2. **备份**（强制前置，备份失败就不执行）：
