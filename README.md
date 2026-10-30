@@ -25,6 +25,7 @@ All skills in this repository. Click links for full documentation.
 | [`troubleshooting`](skills/troubleshooting/SKILL.md) | 排查问题统一入口：连开发/测试环境查 pod/节点/机器日志、在多个本地代码库查代码、按客户报错与软件版本切换到对应版本代码定位问题（通常无法连客户环境）；三场景分流、证据分级（已证实/推测）、只读脚本与受保护环境确认；修复写操作只经 apply.py（白名单 + T1/T2R/T2U/T3 授权分层 + 强制备份，覆盖 kubectl/SSH/DB），verify.py 复验 PASS/FAIL、不过回滚 | `排查问题` `定位问题` `查日志` `查 pod` `客户报错` `版本定位` `多仓库查代码` `修复回滚` `troubleshooting` |
 | [`skill-freshness-audit`](skills/skill-freshness-audit/SKILL.md) | 审计 skill 库的新鲜度 / 冗余 / 事实性过期：按 0→1 私有知识（persist）/ 1→100 流程代偿（sunset 候选）/ 治理边界（never-remove）分类，附可追溯行号证据；建议型，绝不自动修改 / 删除 / 下线任何 skill | `审计skill库` `检查skill是否过时` `skill保质期` `哪些skill冗余` `skill特有性检查` `生成skill审计清单` |
 | [`automation-task-execution`](skills/automation-task-execution/SKILL.md) | AI 辅助自动化任务执行协议：缺口分析（不运行就把缺口按谁能补分流：AI 自取 / 人提供 / 运行时探针 / 可默认假设，B 类一轮集中提问）→ 真实探索（先跑真实请求、不写自动化代码）→ 执行方案 → 冒烟跑通一个最简用例 → 批量实现 → 经验沉淀；配失败分类与授权边界（哪些可自行修复、哪些必须先问人）、断言强度守恒（跑通 ≠ 正确）、上下文文件条目结构与定期复核；附三个只报告不改文件的脚本：断言强度回退检测（同一断言主体上精确比较被换成弱检查、字段断言消失、异常被吞、用例被跳过）、沉淀条目字段 / 时效校验、跨文档规则一致性核对 | `自动化任务` `生成自动化代码` `把手工用例转成自动化` `接口自动化` `UI 测试自动化` `E2E 脚本` `用例代码化` `冒烟跑通一个用例` `探索性执行` `缺口分析` `流程缺什么信息` |
+| [`ambitious`](skills/ambitious/SKILL.md) | 按 Felix Rieseberg「高度·深度·广度」三维度把普通任务改写成更有野心的版本：先出方案（列明工具、野心目标、外部验证方式）、等用户确认再动手；强调"更深非更大"、外部裁判验证、环境前提（MCP/可装软件/可接数据），附何时不用与代价提示 | `/ambitious` `更有野心` `目标抬升` `深度改写` `外部验证` `把任务想高/想深/想宽` |
 
 ## 开发规范 / Development Guide
 
