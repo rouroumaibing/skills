@@ -83,7 +83,7 @@ metadata:
   <title>OpenWiki Architecture Docs</title>
   <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/docsify@latest/lib/themes/vue.css">
 </head>
 <body>
   <div id="app"></div>
@@ -97,17 +97,47 @@ metadata:
       search: { placeholder: '搜索文档...' }
     };
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/docsify.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/docsify@4/lib/plugins/search.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@latest/lib/docsify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify@latest/lib/plugins/search.min.js"></script>
   <script type="module">
-    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.mjs';
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@latest/dist/mermaid.esm.mjs';
     mermaid.initialize({ startOnLoad: true });
     window.mermaid = mermaid;
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/docsify-mermaid@2/dist/docsify-mermaid.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/docsify-mermaid@latest/dist/docsify-mermaid.js"></script>
+
+  <!-- 右上角「重新生成」按钮：调用本地 wiki_server.py 的 /refresh 端点刷新依赖 -->
+  <button id="wiki-refresh-btn" style="position:fixed;top:12px;right:12px;z-index:9999;padding:6px 12px;border:1px solid #4a90d9;border-radius:6px;background:#fff;color:#4a90d9;cursor:pointer;font-size:13px;box-shadow:0 1px 4px rgba(0,0,0,.15)">⟳ 重新生成</button>
+  <span id="wiki-toast" style="position:fixed;top:14px;right:120px;z-index:9999;font-size:13px;color:#333"></span>
+  <script>
+    (function () {
+      var btn = document.getElementById('wiki-refresh-btn');
+      var toast = document.getElementById('wiki-toast');
+      if (!btn) return;
+      btn.onclick = function () {
+        btn.disabled = true; btn.textContent = '刷新中…';
+        fetch('/refresh').then(function (r) { return r.json(); }).then(function (j) {
+          toast.textContent = (j.status === 'pass')
+            ? '✅ 已更新为最新'
+            : '⚠️ ' + (j.message || j.status);
+        }).catch(function (e) {
+          toast.textContent = '❌ 刷新失败: ' + e.message;
+        }).then(function () {
+          btn.disabled = false; btn.textContent = '⟳ 重新生成';
+          setTimeout(function () { toast.textContent = ''; }, 5000);
+        });
+      };
+    })();
+  </script>
 </body>
 </html>
 ```
+
+> **Runtime Dependencies (`@latest` + 安全网)** — 本 skill 有意使用 `@latest`（当前解析：docsify 5.1.0 / mermaid 12.2.0 / docsify-mermaid 2.0.1），使生成的 Wiki 始终拉取各库最新版本，零版本维护。
+>
+> 安全网：同目录的 `wiki_refresh.py` 每次刷新都会重新解析 `@latest` 并做**资产级健康检验**（CDN 可达 + 含预期全局符号）；若 `@latest` 资产不可用，自动**回退到上次已知可用版本**（首次无历史时种子为 `4.13.1` / `10.9.8` / `2.0.1`），保证 Wiki 永远可看。
+>
+> 诚实边界：资产级检验无法在没有无头浏览器时验证「新大版本是否破坏模板 API」。当 docsify / mermaid 发布破坏性大版本时，`index.html` 模板（如 `window.$docsify` 配置、`search` 插件路径、`mermaid.initialize`）可能失效——此时安全网会检测到并回退，但 Wiki 不会自动适配新大版本，需人工更新模板。升级前务必实际打开页面确认侧边栏 / 搜索 / 至少一个 Mermaid 图正常渲染。
 
 **`_sidebar.md`** — 自动生成的导航侧边栏（根据实际生成的文档编排）：
 
@@ -144,14 +174,17 @@ metadata:
 
 > 实际生成时将各 `.md` 文件内容拼接至 `README.md`（Docsify 不支持 include 语法，需物理拼接）。
 
-#### Step 3: 启动本地预览服务
-在输出目录下运行 Python 内置 HTTP 服务器（全平台通用）：
+#### Step 3: 启动本地预览服务（含 /refresh 刷新端点）
+将本 skill 的 `scripts/wiki_server.py` 与 `scripts/wiki_refresh.py` 复制到输出目录，并运行服务器（纯标准库，全平台通用）：
 
 ```bash
 cd <项目根>/docs/wiki/<YYYYMMDD-wiki>/
-python3 -m http.server 8000   # macOS/Linux
-python -m http.server 8000    # Windows
+cp <本skill目录>/scripts/wiki_server.py <本skill目录>/scripts/wiki_refresh.py .
+python3 wiki_server.py 8000   # macOS/Linux
+python wiki_server.py 8000    # Windows
 ```
+
+> 该服务器在静态托管 Wiki 的同时提供 `GET /refresh` 端点，供浏览器右上角「重新生成」按钮调用：重新解析 `@latest`、做资产级健康检验、必要时回退到已知可用版本。
 
 #### Step 4: 输出预览卡片
 在 Skill 回复结尾输出：
@@ -161,9 +194,10 @@ OpenWiki 文档已成功生成并启动本地预览！
 
 本地查看交互式 Wiki 网页：
 1. 终端切换到文档目录: cd docs/wiki/<YYYYMMDD-wiki>/
-2. 启动服务: python3 -m http.server 8000
+2. 启动服务: python3 wiki_server.py 8000
 3. 浏览器访问: http://localhost:8000
    （支持 Mermaid 架构图渲染、侧边栏导航、全文搜索）
+4. 右上角「⟳ 重新生成」按钮：一键刷新依赖到 @latest（资产异常时自动回退）
 ```
 
 ## Output Location
@@ -187,9 +221,10 @@ docs/wiki/20260730-wiki/
 ├── workflows.md             # Key Workflows & Call Chains（含时序图）
 ├── stories.md               # Feature Stories（含异步链路时序图）
 ├── api-reference.md         # API & Module Reference（含源码索引）
-├── index.html               # Docsify 入口（Phase 4 默认生成）
-├── _sidebar.md              # Wiki 导航侧边栏（Phase 4 默认生成）
-└── README.md                # 聚合首页（Phase 4 默认生成）
+├── index.html              # Docsify 入口（Phase 4 默认生成，含「重新生成」按钮）
+├── _sidebar.md             # Wiki 导航侧边栏（Phase 4 默认生成）
+├── wiki_server.py          # 本地预览服务器 + /refresh 端点（从本 skill 复制）
+└── wiki_refresh.py         # 依赖刷新 + 健康检验 + 回退（从本 skill 复制）
 ```
 
 > 若项目根目录下 `docs/wiki/` 不存在，自动创建。
