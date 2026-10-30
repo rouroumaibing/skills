@@ -98,6 +98,27 @@ RULES: List[Rule] = [
         note="D 类默认假设写入「已采用的默认假设」，交付时汇总；不得混入待确认项，"
              "否则会误触 Phase 2「待确认项非空必须停下」的停止条件",
     ),
+    Rule(
+        name="四对账清单",
+        pattern=r"断言[、+\s]*代码模式[、+\s]*资源池姿态[、+\s]*TODO\s*清零",
+        docs=("SKILL.md", "templates/execution-plan.md", "references/prompt-templates.md"),
+        note="完成判据对账扩为四项：断言、代码模式、资源池姿态、TODO 清零；"
+             "枚举顺序与措辞三处必须一致，漏一项就回到只看退出码的老路",
+    ),
+    Rule(
+        name="骨架示意不得照抄",
+        pattern=r"方案示意[，、\s]*不得直接照抄",
+        docs=("SKILL.md", "templates/execution-plan.md", "references/prompt-templates.md"),
+        note="骨架代码只能当方案示意，实现以现有代码的真实写法为准；"
+             "照抄骨架等于把推断当事实",
+    ),
+    Rule(
+        name="缺口分析独立成文件",
+        pattern=r"独立成文件[^。]*不得合并",
+        docs=("SKILL.md", "templates/gap-analysis.md"),
+        note="gap-analysis.md 必须独立成文件，不得合并进其它设计文档；"
+             "缺口分析有自己的生命周期（回填台账、事后确认）",
+    ),
 ]
 
 # Wordings that must not appear anywhere. These are superseded phrasings
