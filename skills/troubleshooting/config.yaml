@@ -10,3 +10,5 @@ codehub:                        # 本地代码库：组件别名 -> 本地仓库
 
 worktree:
   workdir: xx/                  # 客户报版本时，只读 worktree 的工作目录
+
+troubleshooting-knowledge: d:/skills/troubleshooting-knowledge   # 知识库 skill 目录（河道取水：定位问题时自动扫描其 knowledge/，不写死文件名；跨平台路径，按 config 既有 expand 规则展开）

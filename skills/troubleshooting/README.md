@@ -21,6 +21,7 @@
          selector: app=order-svc     # 覆盖 pod label，优先级最高；未配置时按通用标签键 app=/k8s-app=/component= 依次尝试，再按 pod 名称子串兜底（平台无关）
        ```
    - `worktree.workdir`：客户报版本时只读 worktree 的工作目录。
+   - `troubleshooting-knowledge`（可选）：知识库 skill 目录，指向独立的 `troubleshooting-knowledge` skill 根（跨平台路径，按本节第 4 点 `expand()` 规则展开）。配置后，troubleshooting 在定位问题时通过 `scripts/knowledge.py` **自动扫描**其 `knowledge/` 取水——不写死文件名；河道只读取水、永不反向写库。不配置则跳过知识库（纯靠框架与运行时取证）。
 2. **可选覆盖键**（不写则用默认值，保持 config 极简）：
    - `conn.user`：SSH 用户，默认 `root`。
    - `conn.namespace` / `conn.context`：跳板机 kubectl 的 namespace / context，缺省用跳板机当前。注意：`logs.py` 的查询默认 `-A` 全 namespace 发现，`-n <ns>` 显式收窄优先，业务 pod 不在 default namespace 也**无需**再配 `namespace`。
