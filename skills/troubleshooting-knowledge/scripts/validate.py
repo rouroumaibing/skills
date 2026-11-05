@@ -11,7 +11,8 @@
 * 递归扫描 knowledge/ 全部 *.md（oss/ 与 personal/ 两个 scope 子目录），解析 frontmatter；
 * error → exit 1：
   - 必填字段（schema/domain/scope/updated/source/confidence/status/evidence）
-  - schema 版本 = 1；日期格式 YYYY-MM-DD；枚举（scope/confidence/status）
+  - schema 版本 = 1；日期格式 YYYY-MM-DD；枚举（scope/confidence/status/type，
+    type 省略按 issue 处理）
   - scope 与所在目录一致；list 字段为字符串数组（数字型错误码必须加引号）
   - evidence 非空且每项含 run/what（covers 可选，字符串数组）——**没有证据的条目不收**
   - 条目内出现 HTML 注释（<!--）→ error：消费方整篇读入条目，注释内容模型照样
@@ -19,14 +20,17 @@
   - {{ … }} 未填模板残留（跳过代码围栏）
   - 密钥特征 → error（AKIA… / BEGIN … PRIVATE KEY / Bearer … / password= 等）；
     扫描范围为全文（含代码围栏——围栏不是免责区）
-  - oss 条目 superseded_by 指向 personal/ → error（私有信息不出库）
+  - oss 条目 superseded_by **或 related** 指向 personal/ → error（私有信息不出库）；
+    related 指向自身 → error
   - 作废链循环引用 → error
 * 告警（warn，不阻断）：
   - 私网 IP / 邮箱 / 手机号（手机号带前后非数字边界，防误伤时间戳等 11 位数字）
   - 注入句式（ignore previous / system prompt / 忽略以上 / 你现在是 / curl … | sh / …）
   - verified 条目正文含 〔推论〕/〔待复核〕行内标记（verified 不应混有未证实内容）
   - doc-sourced 条目缺版本信息（versions 为空且 evidence.run 不含版本号）
-  - deprecated 缺 superseded_by；superseded_by 指向不存在或非 active 条目
+  - deprecated 缺 superseded_by；superseded_by 指向不存在或非 active 条目；
+    related 指向不存在的条目
+  - 体量超出 type 分级软上限（issue ≤100 行/5KB；system ≤300 行/20KB）
   - 重复错误码；updated 超过 180 天未更新（建议复核）
 
 用法
@@ -50,10 +54,13 @@ except ImportError:
 
 SCHEMA_VERSION = 1
 REQUIRED = ("domain", "scope", "updated", "source", "confidence", "status", "evidence")
-LIST_FIELDS = ("components", "symptoms", "error_codes", "versions", "aliases", "envs", "topics")
+LIST_FIELDS = ("components", "symptoms", "error_codes", "versions", "aliases", "envs", "related", "topics")
 SCOPE_ENUM = {"oss", "personal"}
 CONFIDENCE_ENUM = {"verified", "observed-once", "doc-sourced"}
 STATUS_ENUM = {"active", "deprecated", "disputed"}
+TYPE_ENUM = {"system", "issue"}          # 条目类型；省略按 issue 处理
+# 体量软上限（行数, 字节数），按 type 分级；超限 warn（人工判断是否拆分，related 串联）
+SIZE_LIMITS = {"issue": (100, 5 * 1024), "system": (300, 20 * 1024)}
 STALE_DAYS = 180
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -149,6 +156,7 @@ def build_entries(knowledge_dir: str):
     entries: list[dict] = []
     seen_codes: dict[tuple[str, str], str] = {}
     superseded_graph: dict[str, str] = {}
+    related_graph: dict[str, list[str]] = {}
     today = datetime.date.today()
 
     files: list[str] = []
@@ -197,6 +205,12 @@ def build_entries(knowledge_dir: str):
         status = str(fm.get("status", "active")).lower()
         if fm.get("status") and status not in STATUS_ENUM:
             errors.append(f"{rel}: status 非法: {status}（应为 active / deprecated / disputed）")
+
+        # 条目类型：system / issue（省略按 issue 处理），决定体量软上限
+        etype = str(fm.get("type", "issue")).lower()
+        if fm.get("type") and etype not in TYPE_ENUM:
+            errors.append(f"{rel}: type 非法: {etype}（应为 system / issue，省略=issue）")
+            etype = "issue"
 
         # evidence 必填：非空数组且每项含 run + what；covers 可选字符串数组
         ev = fm.get("evidence")
@@ -252,6 +266,29 @@ def build_entries(knowledge_dir: str):
         elif status == "deprecated":
             warnings.append(f"{rel}: deprecated 条目缺 superseded_by（应指向替代条目）")
 
+        # related 关联条目：oss 禁指 personal/、禁自指；存在性在全文扫描后统一校验
+        related_paths: list[str] = []
+        rv = fm.get("related")
+        if rv is not None:
+            if isinstance(rv, list) and all(isinstance(x, str) for x in rv):
+                related_paths = [str(x).replace("\\", "/").lstrip("./") for x in rv]
+                for rp in related_paths:
+                    if scope == "oss" and rp.startswith("personal/"):
+                        errors.append(f"{rel}: oss 条目的 related 指向 personal/ 条目"
+                                      f"（{rp}）——私有信息不出库")
+                    if rp == rel:
+                        errors.append(f"{rel}: related 指向自身（{rp}）")
+                related_graph[rel] = related_paths
+            # 非字符串数组的类型错误已由 LIST_FIELDS 统一报出
+
+        # 体量软上限（按 type 分级）：超限 warn，人工判断是否按子系统拆分
+        lim_lines, lim_bytes = SIZE_LIMITS[etype]
+        n_lines = len(full.splitlines())
+        n_bytes = len(full.encode("utf-8"))
+        if n_lines > lim_lines or n_bytes > lim_bytes:
+            warnings.append(f"{rel}: 体量 {n_lines} 行/{n_bytes}B 超出 type={etype} 软上限"
+                            f"（{lim_lines} 行/{lim_bytes}B）——建议拆分并用 related 串联")
+
         # 过期告警
         if fm.get("updated") and DATE_RE.match(str(fm["updated"])):
             try:
@@ -272,6 +309,7 @@ def build_entries(knowledge_dir: str):
         entries.append({
             "file": rel,
             "schema": fm.get("schema"),
+            "type": etype,
             "domain": fm.get("domain"),
             "scope": scope,
             "components": fm.get("components") or [],
@@ -291,6 +329,11 @@ def build_entries(knowledge_dir: str):
             warnings.append(f"{src}: superseded_by 指向不存在的条目: {dst}")
         elif by_rel[dst]["status"] != "active":
             warnings.append(f"{src}: superseded_by 指向的条目 {dst} 不是 active（替代链断裂）")
+    # related 指向校验（存在性；目标是否 active 不强求——关联≠替代）
+    for src, dsts in related_graph.items():
+        for dst in dsts:
+            if dst not in by_rel:
+                warnings.append(f"{src}: related 指向不存在的条目: {dst}")
     # 循环引用 → error
     for start in superseded_graph:
         seen, node = set(), start
