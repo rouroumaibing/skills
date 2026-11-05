@@ -86,10 +86,7 @@ EMPTY_CATCH = [
     (r"\bcontextlib\.suppress\s*\(", "python contextlib.suppress (exception swallowed)"),
     (r"\bwith\s+suppress\s*\(", "python suppress() (exception swallowed)"),
 ]
-# v12：相邻两行空 catch（black/ruff 格式化会把 `except X: pass` 拆成两行）。
-# EXCEPT_HEADER 匹配"以冒号收尾的 except 头"（可带尾注释）；BARE_NOOP_BODY 匹配
-# 空体行（pass / ...，可带尾注释）。两行在新增行序列中相邻即报（夹注释行的
-# 形态仍属盲区，见 docstring）。
+# 格式化器会把 `except X: pass` 拆成相邻两行，故按 except 头 + 空体行组合匹配。
 EXCEPT_HEADER = re.compile(r"^\s*except\b[^:#]*:\s*(#.*)?$")
 BARE_NOOP_BODY = re.compile(r"^\s*(?:pass|\.\.\.)\s*(#.*)?$")
 EMPTY_ASSERT = [
@@ -513,7 +510,7 @@ def self_test():
                    wr("d17.txt", q))
         assert rc17 == VIOLATION, "expected VIOLATION (quoted octal path), got %d" % rc17
 
-        # 场景18：内容以 ++ 开头的新增行不再是文件头（v10 前被丢弃=漏检）
+        # 场景18：内容以 ++ 开头的新增行按新增内容扫描，不判为文件头
         rc18 = run(chg("c18.json", [{"path": "a.js", "status": "M"}]),
                    wr("d18.txt", hdr("a.js") + "@@ -1,2 +1,3 @@\n"
                       "+++it.skip('inline-plus-plus')\n"))

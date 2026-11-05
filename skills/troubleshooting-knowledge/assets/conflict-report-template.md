@@ -8,7 +8,7 @@
 
 - **条目路径**：<knowledge/<scope>/<domain>-<topic>.md>
 - **条目内锚点**：<出错位置，如 逐环节排查 ③ / 速查表第 4 行 / 配置语义第 2 条 / 原文引用「……」——定位到行，修订时不用通读全条>
-- **条目元信息**：updated=<YYYY-MM-DD>；source=<来源>；confidence=<verified/observed-once/doc-sourced>
+- **条目元信息**：source=<来源>；confidence=<verified/observed-once/doc-sourced>
 - **冲突点**：知识说 <X>；运行时观测到 <Y>
 - **运行时证据位置**：<pod/节点/日志行/时间戳/命令输出摘要——可指认的观测点>
 - **建议动作**：<修订（新事实）/ 合并 / 作废（deprecated + superseded_by）/ disputed（存疑）>

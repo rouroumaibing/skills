@@ -1,1 +1,2 @@
+# Python 3.8+（脚本含 from __future__ import annotations）
 pyyaml>=5.4

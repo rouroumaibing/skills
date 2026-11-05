@@ -8,11 +8,14 @@ work when pasted into a chat — but it means a change made in one file can
 silently go missing in the others. The result is two documents that
 disagree about, say, how many retries are allowed.
 
-This script checks the parameters that must not drift: the retry limit,
-the four authorization-boundary categories, and the assertion rules. It
-also flags superseded wordings (FORBIDDEN) whose presence would silently
-reintroduce a fixed rule conflict. It
-only *reports* — it never edits the documents.
+This script checks the rules that must not drift: the retry limit,
+the four authorization-boundary categories, the assertion rules (including
+the acceptance-level rule), and the newer triage-mode / gap-dimension
+entries that a later edit could silently drop. It also flags superseded
+wordings (FORBIDDEN) whose presence would silently reintroduce a fixed
+rule conflict. Rules marked `unique` additionally fail when their
+wording is duplicated inside a single document. It only *reports* — it
+never edits the documents.
 
 Usage:
     python check_rule_consistency.py [skill-dir] [--json]
@@ -57,10 +60,10 @@ class Rule:
     pattern: str                 # regex, optionally with one capture group
     docs: Tuple[str, ...] = DOCS  # documents that must state it
     note: str = ""
+    unique: bool = False           # also fail when duplicated in one document
 
 
-# The rules that carry a parameter — a number or a fixed list. These are
-# the ones where a drift actually changes what the agent is allowed to do.
+# RULES: parameter-bearing and wording rules that must read the same in every document.
 RULES: List[Rule] = [
     Rule(
         name="重试上限",
@@ -118,6 +121,27 @@ RULES: List[Rule] = [
         docs=("SKILL.md", "templates/gap-analysis.md"),
         note="gap-analysis.md 必须独立成文件，不得合并进其它设计文档；"
              "缺口分析有自己的生命周期（回填台账、事后确认）",
+    ),
+    Rule(
+        name="验收层次不得降档",
+        pattern=r"不得把验收从「结果是否正确」降到「关键字出现过 / 命令跑过 / 退出码为 0」",
+        note="与铁律 4 同源：把验收降到关键字/退出码在 dry-run 下不产生失败信号；"
+             "三份文档须逐字一致，缺一份或改写措辞都算漂移",
+        unique=True,
+    ),
+    Rule(
+        name="定档组合优先级",
+        pattern=r"定档组合优先级",
+        docs=("SKILL.md",),
+        note="轻量档与环境不可用同时成立时的优先级口径；删掉该段会退回「只写注记、不构造替代探针」",
+        unique=True,
+    ),
+    Rule(
+        name="缺口维度：条件分支覆盖与产出物验收",
+        pattern=r"\| 条件分支覆盖 \|[^\n]*\n\| 产出物验收 \|",
+        docs=("templates/gap-analysis.md",),
+        note="§2 两个新增维度须相邻保留；任一被删、改名或调序都会使匹配消失并被报为未声明",
+        unique=True,
     ),
 ]
 
@@ -205,6 +229,21 @@ def check(skill_dir: str) -> List[Finding]:
     for rule in RULES:
         per_doc = {d: collect_values(texts[d], rule) for d in rule.docs}
 
+        # Unique is opt-in: most rules may legitimately be quoted more than once.
+        if rule.unique:
+            for d in rule.docs:
+                if d in missing_docs:
+                    continue
+                hits = sum(1 for _ in re.finditer(rule.pattern, texts[d]))
+                if hits > 1:
+                    findings.append(Finding(
+                        rule=rule.name,
+                        severity="中",
+                        detail=f"`{d}` 中「{rule.name}」出现 {hits} 次"
+                               "（unique 规则要求最多 1 次），可能是措辞被重复插入",
+                        evidence=[],
+                    ))
+
         # A document that does not state the rule at all.
         for d in rule.docs:
             if d in missing_docs:
@@ -267,7 +306,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1 if findings else 0
 
     if not findings:
-        print(f"✓ {len(RULES)} 条规则在 {len(DOCS)} 份文档中一致。")
+        print(f"✓ {len(RULES)} 条规则在所涉文档中一致。")
         return 0
 
     order = {"高": 0, "中": 1}

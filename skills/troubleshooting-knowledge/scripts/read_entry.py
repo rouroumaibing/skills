@@ -167,6 +167,10 @@ def main() -> None:
             matched = [(h, b) for h, b in sections if h.strip("# ").strip().startswith(w)]
             if not matched:
                 die(f"未找到节: {w}（可用节：{'；'.join(h.strip('# ').strip() for h, _ in sections)}）")
+            if len(matched) > 1:
+                names = "；".join(h.strip("# ").strip() for h, _ in matched)
+                sys.stderr.write(f"warn: 节前缀「{w}」匹配到 {len(matched)} 个标题（{names}），"
+                                 f"已全部输出；只需其一请写更长前缀\n")
             for h, b in matched:
                 out.append(f"{h}\n{b}")
         payload = "".join(out)

@@ -93,10 +93,10 @@
 接线：`ai_writable_paths` 是**目录前缀**（如 `ai-reports/`、`docs/`），
 **不是 glob**。
 
-⚠️ **glob 写法告警（v13）**：条目若出现 `* ? [` 元字符，脚本打 WARNING 且该项
+⚠️ **glob 写法告警**：条目若出现 `* ? [` 元字符，脚本打 WARNING 且该项
 **什么都匹配不到**——因为匹配按目录前缀，不按 glob 解释。`"docs/**"` 实际
-匹配不到 `docs/` 下任何文件（漏检）。应写成 `docs/` 前缀。starter 已改
-`docs/`。
+匹配不到 `docs/` 下任何文件（漏检）；`ai_writable_paths` 里写 `docs/` 前缀
+（starter 模板即此写法）。
 
 退出码：0 / 1 / 42（redlines 缺失 / 损坏 / pyyaml 缺失 → 42）。
 

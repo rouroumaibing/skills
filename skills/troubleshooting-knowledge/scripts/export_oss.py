@@ -8,7 +8,7 @@
 
 用法
 ----
-* python3 scripts/export_oss.py                        # 默认 src=本 skill，out=<同级>/<名>.oss-export
+* python3 scripts/export_oss.py                        # 默认 src=本 skill 根（scripts/ 的上一级），out=系统临时目录/<名>.oss-export
 * python3 scripts/export_oss.py --src <skill 目录> --out <导出目录>
 
 退出：全部通过 exit 0；任一失败 exit 1。
@@ -21,6 +21,7 @@ import sys
 import shutil
 import subprocess
 import argparse
+import tempfile
 
 
 def die(reason: str) -> None:
@@ -41,12 +42,14 @@ def main() -> None:
     ap.add_argument("--out", default=None, help="导出目录（默认：<src 同级>/<名>.oss-export）")
     args = ap.parse_args()
 
-    src = args.src or os.path.dirname(os.path.abspath(__file__))
+    # __file__ 在 scripts/ 下，需再上一级才是 skill 根
+    src = args.src or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if not os.path.isdir(src):
         die(f"skill 源目录不存在: {src}")
 
     name = os.path.basename(src.rstrip("/"))
-    out = args.out or os.path.join(os.path.dirname(os.path.abspath(src)), f"{name}.oss-export")
+    # 默认导出到系统临时目录，避免在源目录/仓库里留下 .oss-export 垃圾
+    out = args.out or os.path.join(tempfile.gettempdir(), f"{name}.oss-export")
 
     if os.path.exists(out):
         shutil.rmtree(out)
@@ -77,9 +80,13 @@ def main() -> None:
                 text = open(p, encoding="utf-8").read()
             except OSError:
                 continue
-            for m in re.finditer(r"personal/", text):
+            # 只扫 frontmatter：正文里合法提到 knowledge/personal/ 的说明文字不误伤；
+            # oss 条目 related/superseded_by 指向 personal/ 已由 validate 强校验。
+            fm = re.match(r"^---\s*\n.*?\n---\s*\n", text, re.S)
+            fm_text = fm.group(0) if fm else ""
+            for _m in re.finditer(r"personal/", fm_text):
                 rel = os.path.relpath(p, out)
-                leaks.append(f"{rel}:{m.start()}")
+                leaks.append(f"{rel}:frontmatter")
     if leaks:
         die("导出物 knowledge/ 中仍出现 personal/ 字样（悬空引用）：\n  " + "\n  ".join(leaks))
 

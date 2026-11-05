@@ -1,6 +1,6 @@
 ---
 name: harness-workflow
-description: "触发词：审计、审查、检查对否、artifact 校验、契约核查、证据核对、缺口清单、对抗推演、防 AI 虚报。| Audits work products against the goal contract and rule registry; emits an evidence-backed report with gaps, fix suggestions (each carrying an adversarial replay and credibility grade), and archive guidance. | 对产物对照契约与判据出具带证据的审计报告；修改建议逐条附对抗推演与可信度分级；支持有仓库与聊天两种模式。"
+description: "触发词：审计产物、审查、检查对否、artifact 校验、契约核查、证据核对、缺口清单、对抗推演、防 AI 虚报。| Audits work products against the goal contract and rule registry; emits an evidence-backed report with gaps, fix suggestions (each carrying an adversarial replay and credibility grade), and archive guidance. | 对产物对照契约与判据出具带证据的审计报告；修改建议逐条附对抗推演与可信度分级；支持有仓库与聊天两种模式。"
 metadata:
   agent_created: true
   version: "13"

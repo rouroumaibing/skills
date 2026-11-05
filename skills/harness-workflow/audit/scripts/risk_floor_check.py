@@ -454,15 +454,15 @@ def self_test():
                      "--diff", d11, "--contract-risk-level", "low"])
         assert rc11 == OK, "expected PASS (prose skipped by skip_paths), got %d" % rc11
 
-        # 场景12：黑名单下非常见扩展名（.rs）不再漏检（白名单历史缺口）
+        # 场景12：黑名单下非常见扩展名（.rs）可检出
         d12 = wr("d12.txt", "diff --git a/src/x.rs b/src/x.rs\n"
                             "+++ b/src/x.rs\n"
                             "+GRANT SELECT ON users TO app;\n")
         rc12 = main(["--changes", chg("c12.json", "src/x.rs"),
                      "--diff", d12, "--contract-risk-level", "low"])
-        assert rc12 == VIOLATION, "expected VIOLATION (.rs no longer missed), got %d" % rc12
+        assert rc12 == VIOLATION, "expected VIOLATION (.rs detected), got %d" % rc12
 
-        # 场景13：变更 yaml（Liquibase 类）同理不再漏检（黑名单不含 yaml）
+        # 场景13：变更 yaml（Liquibase 类）同理可检出（黑名单不含 yaml）
         d13 = wr("d13.txt", "diff --git a/db/changes.yaml b/db/changes.yaml\n"
                             "+++ b/db/changes.yaml\n"
                             "+- changeSet:\n"
@@ -493,7 +493,7 @@ def self_test():
                       "--diff", d15b, "--contract-risk-level", "low"])
         assert rc15b == VIOLATION, "expected VIOLATION (legacy path_glob .sql), got %d" % rc15b
 
-        # 场景16：拼接只限相邻新增行——中间隔上下文行不拼（跨 hunk 不再误拼）
+        # 场景16：拼接只限相邻新增行——中间隔上下文行不拼（跨 hunk 不误拼）
         d16 = wr("d16.txt", "diff --git a/src/x.py b/src/x.py\n"
                             "+++ b/src/x.py\n"
                             "+DROP\n"

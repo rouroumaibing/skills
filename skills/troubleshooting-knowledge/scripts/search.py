@@ -8,6 +8,8 @@ aliases/envs，兼容旧 topics）权重 3 + 正文权重 1，大小写不敏感
 未命中时按 2-gram 重合度回退（权重低于整词，需 ≥2 个 gram 命中）。
 排序：分数降序 → confidence 优先级（verified > observed-once > doc-sourced）→ 路径。
 过滤：默认只出 active 条目（--include-inactive 放开）；--scope oss|personal 分层过滤。
+命中行 hit= 标注来源（fm/body/fm+body/2gram）；无命中额外给 hint 提示换别名重试。
+score_entry 的可选 detail 参数只用于带出来源，不传时行为不变（消费方契约不破）。
 
 用法
 ----
@@ -70,9 +72,14 @@ def _cjk_bigrams(term: str) -> list[str]:
     return list({term[i:i + 2] for i in range(len(term) - 1)})
 
 
-def score_entry(fm: dict, body: str, terms: list[str]) -> int:
+def score_entry(fm: dict, body: str, terms: list[str],
+                detail: dict | None = None) -> int:
     """打分：整词命中 fm +3 / 正文 +1；中文查询词整词未命中时按 2-gram 重合度
-    回退，权重低于整词（fm +2 / 正文 +1，且需 ≥2 个 gram 命中才计分）。"""
+    回退，权重低于整词（fm +2 / 正文 +1，且需 ≥2 个 gram 命中才计分）。
+
+    detail 为可选出参：调用方传入空 dict 可拿到 hit= 命中来源（fm/body/fm+body/
+    2gram/none）。不传时行为与原来完全一致——消费方 import 本函数不受影响。
+    """
     parts: list[str] = []
     for k in MATCH_FIELDS:
         v = fm.get(k)
@@ -83,6 +90,7 @@ def score_entry(fm: dict, body: str, terms: list[str]) -> int:
     fm_text = " ".join(parts).lower()
     body_lower = body.lower()
     score = 0
+    fm_any = body_any = gram_any = False
     for t in terms:
         tl = t.lower()
         # 长度≤3 的纯 ASCII 词按词边界匹配，避免 gat 误中 gateway、503 误中 5031 等；
@@ -97,8 +105,10 @@ def score_entry(fm: dict, body: str, terms: list[str]) -> int:
             body_hit = tl in body_lower
         if fm_hit:
             score += 3
+            fm_any = True
         if body_hit:
             score += 1
+            body_any = True
         if not fm_hit and not body_hit:
             grams = _cjk_bigrams(tl)
             if grams:
@@ -106,8 +116,21 @@ def score_entry(fm: dict, body: str, terms: list[str]) -> int:
                 hits_body = sum(1 for g in grams if g in body_lower)
                 if hits_fm >= 2:
                     score += 2
+                    gram_any = True
                 if hits_body >= 2:
                     score += 1
+                    gram_any = True
+    if detail is not None:
+        if fm_any and body_any:
+            detail["hit"] = "fm+body"
+        elif fm_any:
+            detail["hit"] = "fm"
+        elif body_any:
+            detail["hit"] = "body"
+        elif gram_any:
+            detail["hit"] = "2gram"
+        else:
+            detail["hit"] = "none"
     return score
 
 
@@ -146,20 +169,23 @@ def main() -> None:
             body = open(path, encoding="utf-8").read()
         except OSError:
             body = ""
-        score = score_entry(fm, body, terms)
+        detail: dict = {}
+        score = score_entry(fm, body, terms, detail)
         if score > 0:
             rel = os.path.relpath(path, knowledge_dir).replace("\\", "/")
             conf = str(fm.get("confidence", "")).lower()
             ranked.append((score, CONF_RANK.get(conf, 3), rel, scope, conf, status,
-                           fm.get("updated", "")))
+                           detail["hit"]))
     ranked.sort(key=lambda x: (-x[0], x[1], x[2]))
 
     if not ranked:
         print("status=NO_KNOWLEDGE_HIT terms=%s" % " ".join(terms))
+        print("hint=纯关键词匹配无命中：换别名/缩写/中英文叫法，或换种说法再试一次；"
+              "仍无命中才走新建（见 SKILL.md 抽取流程第 1 步）")
         return
 
-    for score, _cr, rel, scope, conf, status, updated in ranked[: max(1, args.top)]:
-        print(f"score={score} scope={scope} conf={conf} status={status} updated={updated} {rel}")
+    for score, _cr, rel, scope, conf, status, hit in ranked[: max(1, args.top)]:
+        print(f"score={score} hit={hit} scope={scope} conf={conf} status={status} {rel}")
 
 
 if __name__ == "__main__":

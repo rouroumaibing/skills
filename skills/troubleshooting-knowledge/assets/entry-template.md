@@ -1,24 +1,21 @@
 ---
 schema: 1
-type: system                  # system=多资源/多环节的链路型系统 / issue=单个错误码或行为（省略=issue）
 domain: {{填写：组件/系统域，如 k8s-service / coredns / envoy-gateway / cert-manager}}
-scope: oss                    # oss=开源通用（可分发） / personal=个人项目（不出库）；必须与所在目录一致
+scope: oss
 components: [{{填写：涉及组件名}}]
 symptoms: [{{填写：典型症状关键词，如 域名解析失败 / 5xx 陡增 / Pod 一直 Pending}}]
 error_codes: [{{填写：错误码/状态/reason，保留原始写法；数字型必须加引号，如 "503"}}]
-versions: [{{填写：依据的版本，如 "1.x"；doc-sourced 条目需带版本信息（本行或 evidence.run）}}]
+versions: [{{填写：依据的版本，如 "1.x"；doc-sourced 条目需带版本信息}}]
 envs: [{{填写：适用环境；环境无关则删除本行}}]
 aliases: [{{填写：别名 / 缩写 / 中英文叫法 / 旧名}}]
-status: active                # 只能是 active / deprecated / disputed
-confidence: doc-sourced       # verified=运行时取证直接观测 / observed-once=单次观察 / doc-sourced=上游文档语义（oss 条目常用）
-evidence:                     # 必填：非空数组，每项含 run+what；条目里每个 R# 行都应能在这里找到出处
-  - run: {{填写：上游文档名+版本+章节；或排查 run 的日期/ID}}
+status: active
+confidence: doc-sourced
+evidence:
+  - run: {{填写：依据来源：上游文档名+版本+章节，或运行时观测方式；不写具体日期}}
     what: {{填写：读到/观测到什么；值含冒号时整句加引号}}
-    covers: [{{填写：可选——本条证据覆盖的正文位置，如 资源匹配关系 R1 / 逐环节排查 L2}}]
-updated: {{填写：YYYY-MM-DD}}
-source: {{填写：哪份上游文档 / 哪次排查}}
+    covers: [{{填写：本条证据覆盖的正文位置，如 资源匹配关系 R1 / 逐环节排查 L2}}]
+source: {{填写：依据来源：哪份上游文档及章节 / 哪类观测事实；不写具体日期}}
 related: [{{填写：关联条目的相对路径，如 oss/foo-bar.md；暂无则删除本行}}]
-# superseded_by: <替代条目相对路径>   # 仅 status: deprecated 时启用；oss 条目禁止指向 personal/
 ---
 
 # {{填写：XX}}排查参考

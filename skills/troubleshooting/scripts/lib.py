@@ -459,8 +459,7 @@ def _exec_once(client: "paramiko.SSHClient", target: str, remote_command: str,
         _stdin.write(stdin_data)
         _stdin.flush()
         _stdin.channel.shutdown_write()  # signal EOF so remote readers unblock
-    # stdout/stderr 必须并发排空：先读完一路再读另一路时，任一路缓冲打满会
-    # 阻塞远端进程 -> 两路都等不到 EOF（stderr 很大时 classic 死锁）
+    # stdout/stderr 必须并发排空：串行读取会在缓冲打满时与远端互等成死锁。
     out_box: dict = {}
     t_out = threading.Thread(
         target=lambda: out_box.setdefault(

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """validate.py — 知识条目校验器（知识层维护工具，非消费方）。
 
-原名 build_index.py；index.yaml 机制已移除（2026-11-04）：条目量小、消费方本就
-全量递归扫描，且「索引与全扫合并」存在隐患——索引里已删除的文件仍可作为候选命中
-（消费方拿到不存在的路径）。故本工具只做校验，不再生成任何索引文件。
+本工具只做校验、不生成索引文件：条目量小、消费方本就全量递归扫描，且「索引与全扫合并」
+存在隐患——索引里已删除的文件仍可作为候选命中（消费方拿到不存在的路径）。
 
 职责
 ----
@@ -11,32 +10,40 @@
 * 校验 knowledge/ 全部 *.md（oss/ 与 personal/ 两个 scope 子目录），解析 frontmatter；
   也支持**落盘前**校验草稿：--file <路径> --scope oss|personal，或
   --draft-dir <目录> [--scope X]，给出与落盘后一致的结果（条目不进 knowledge/ 即可先校验）；
-* 过期判断基准日可用 --today 固定（默认当天），便于测试；
 * error → exit 1；warn → 不阻断。
 
 error（阻断）
-- 必填字段 / schema=1 / 日期 / 枚举（scope/confidence/status/type）
+- 必填字段 / schema=1 / 枚举（scope/confidence/status）
+- frontmatter 含 type 字段 → error（条目形态只有一种：链路/系统型通用排查参考；
+  具体报错由消费方按错误码自行归类到对应链路，不在库里建独立条目或维护映射表）
 - scope 与所在目录一致；list 字段为字符串数组（数字型错误码/版本加引号）
 - evidence 非空且每项含 run/what（covers 可选字符串数组）——无证据不收
-- 条目含 HTML 注释（<!--）→ error（隐蔽注入通道，消费方整篇读入，注释对模型可见）
-- 未填模板标记：{{填写…}} 全文（含代码围栏）检测；泛 {{ 跳过围栏仍检测
-- 高置信度密钥特征 error：AKIA… / 私钥块 / Bearer≥20 字符 / password|passwd|pwd= 后接字面值
+- 条目含 HTML 注释（<!--）或 frontmatter YAML 注释（#）→ error（两者对消费方模型都可见，
+  是同一条隐蔽注入通道；说明写 assets/entry-template-guide.md，不进条目）
+- 未填模板标记：{{填写…}} 全文（含代码围栏）检测；泛 {{ 跳过围栏仍检测；解析 frontmatter 之前先判，
+  避免 PyYAML 报错淹没真正原因
+- 高置信度密钥特征 error：AKIA… / 私钥块 / Bearer≥20 / password|passwd|pwd= /
+  sk-… / GitHub gh*_ / Slack xox* / JWT / Authorization: Basic / 连接串内嵌口令
 - oss 条目 superseded_by 或 related 指向 personal/ → error；related 自指 → error
 - 作废链循环引用 → error
 - frontmatter 不可解析且文件仍含 {{ 标记 → 报「模板未填完」（而非 frontmatter 缺失）
 
 warn（不阻断）
-- 泛词密钥（secret/token/api_key 赋值）降为 warn（已加词边界，排除 imagePullSecret/secretName 等）
+- 泛词密钥（secret/token/api_key 赋值）→ warn（带词边界，排除 imagePullSecret/secretName 等）
+- 内部域名后缀（.corp/.internal/...）→ warn
 - 私网 IP / 邮箱 / 手机号（手机号带前后非数字边界，防误伤时间戳等 11 位数字）
 - 注入句式（ignore previous / system prompt / 忽略以上 / 你现在是 / curl … | sh / …）
 - verified 条目正文含 〔推论〕/〔待复核〕行内标记
 - doc-sourced 缺版本信息（versions 为空且 evidence.run 不含版本形态）
 - deprecated 缺 superseded_by；superseded_by/related 指向不存在的条目
-- 体量超出 type 分级软上限（issue ≤100 行/5KB；system ≤300 行/20KB）
-- 重复错误码（关联条目 system↔issue 或双向 related 豁免）
-- 正文缺核心节（正常链路/逐环节排查/异常归因速查；system 另需 是什么/组件与架构）
+- 体量超出软上限（数值见 SIZE_LIMITS 常量，说明见 references/schema.md）——只提醒
+  「这一条是不是混进了两个主题」，不作为拆分依据；拆分看链路/软件边界
+- 重复错误码（双向 related 的关联条目豁免）
+- 正文缺核心节（是什么/组件与架构/正常链路/逐环节排查/异常归因速查）
 - 锚点完整性（warn 级，误报代价低）：L/P 已定义未覆盖、引用未定义 R#、速查环节列引用未定义编号
-- updated 超过 180 天未更新（建议复核）
+- 证据覆盖度（warn 级）：条目定义的 R# 未在 evidence.covers 标注出处
+- 检索入口（warn 级）：symptoms/aliases 为空——所有条目都是链路型通用排查参考，frontmatter
+  是消费方关键词检索的主入口，口语现象与别名没写进来就命不中
 
 用法
 ----
@@ -44,11 +51,9 @@ warn（不阻断）
 * python3 scripts/validate.py <knowledge_root>            # 指定知识库根
 * python3 scripts/validate.py --file /tmp/kb-draft/x.md --scope oss   # 落盘前校验草稿
 * python3 scripts/validate.py --draft-dir /tmp/kb-draft --scope oss
-* python3 scripts/validate.py --today 2026-11-05          # 固定过期判断基准日（测试用）
 """
 from __future__ import annotations
 
-import datetime
 import os
 import re
 import sys
@@ -61,30 +66,36 @@ except ImportError:
     sys.exit(1)
 
 SCHEMA_VERSION = 1
-REQUIRED = ("domain", "scope", "updated", "source", "confidence", "status", "evidence")
+REQUIRED = ("domain", "scope", "source", "confidence", "status", "evidence")
 LIST_FIELDS = ("components", "symptoms", "error_codes", "versions", "aliases", "envs", "related", "topics")
 SCOPE_ENUM = {"oss", "personal"}
 CONFIDENCE_ENUM = {"verified", "observed-once", "doc-sourced"}
 STATUS_ENUM = {"active", "deprecated", "disputed"}
-TYPE_ENUM = {"system", "issue"}          # 条目类型；省略按 issue 处理
-# 体量软上限（行数, 字节数），按 type 分级；超限 warn（人工判断是否拆分，related 串联）
-SIZE_LIMITS = {"issue": (100, 5 * 1024), "system": (300, 20 * 1024)}
-STALE_DAYS = 180
-DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# 单档软上限（行数, 字节数）：超限只 warn「是否混进两个主题」，拆分看链路/软件边界而非体量。
+SIZE_LIMITS = (800, 60 * 1024)
 
-# 高置信度密钥特征（error 级）——泛词（secret/token）已降为 warn（见下）
+# 高置信度密钥特征（error 级）；泛词（secret/token）按 warn 处理
 SECRET_ERROR_RES = [
     (r"AKIA[0-9A-Z]{16}", "AWS AccessKeyId"),
     (r"-----BEGIN [A-Z ]*PRIVATE KEY-----", "私钥块"),
     (r"Bearer [A-Za-z0-9._~+/-]{20,}", "Bearer 凭据(≥20字符)"),
     # password/passwd/pwd 赋值；词边界 (?![A-Za-z]) 排除嵌入长词；后接字面值 ≥6
     (r"(?<![A-Za-z])(?:password|passwd|pwd)\s*[=:]\s*[\"']?(?!<)[^\"'\s<>]{6,}", "password/passwd 赋值"),
+    # 厂商 token / key 格式（长随机串，误报代价低）
+    (r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}", "OpenAI/Anthropic sk- 密钥"),
+    (r"\bgh[pousr]_[A-Za-z0-9]{36,}", "GitHub token"),
+    (r"\bxox[baprs]-[A-Za-z0-9-]{10,}", "Slack token"),
+    (r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}", "JWT"),
+    (r"(?i)authorization\s*:\s*basic\s+[A-Za-z0-9+/=]{12,}", "Authorization Basic 凭据"),
+    # 连接串内嵌口令：scheme://user:pass@host；口令以 < 开头是尖括号占位符，不误伤
+    (r"\b[a-z][a-z0-9+.-]*://[^\s:/@]+:(?!<)[^\s/@]+@", "连接串内嵌口令"),
 ]
 # 泛词密钥（warn 级）：secret/token/api_key/access_token 的赋值。
 # 词边界 (?![A-Za-z]) 排除 imagePullSecret、secretName 等词内情形；kind: Secret 后无 =/: 不会命中。
 SECRET_WARN_RES = [
     (r"(?<![A-Za-z])(?:secret|token|api[_-]?key|access[_-]?token)\s*[=:]\s*[\"']?(?!<)[^\"'\s<>]{6,}",
      "secret/token 赋值(泛词)"),
+    (r"\b[A-Za-z0-9-]+\.(?:corp|internal|intranet|lan|local|test)\b", "内部域名"),
 ]
 # PII / 内部信息（warn 级）；手机号带前后非数字边界，防误伤时间戳等 11 位数字
 PII_RES = [
@@ -133,7 +144,8 @@ def parse_frontmatter(path: str) -> dict:
     try:
         data = yaml.safe_load(m.group(1))
     except Exception as exc:  # noqa: BLE001
-        sys.stderr.write(f"warn: 解析 frontmatter 失败 {path}: {exc}\n")
+        detail = (str(exc).splitlines() or [type(exc).__name__])[0]
+        sys.stderr.write(f"warn: 解析 frontmatter 失败 {path}: {detail}\n")
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -163,6 +175,65 @@ def unfilled_marker(path: str) -> str | None:
     if m2:
         return f"{{{{…}}}} 模板残留: {m2.group(0)}@offset {m2.start()}"
     return None
+
+
+BLOCK_SCALAR_START = re.compile(
+    r":\s*[|>][0-9+\-]*\s*$|^\s*-\s*[|>][0-9+\-]*\s*$"
+)
+
+
+def frontmatter_comments(full: str) -> list[str]:
+    # 只认行首/前有空白的 #；锚点 URL 与块标量按缩进跳过，块内容仍受全文密钥/注入扫描。
+    m = re.match(r"^---\s*\n(.*?)\n---\s*\n", full, re.S)
+    if not m:
+        return []
+    hits: list[str] = []
+    in_block = False
+    key_indent = 0
+    content_indent = None
+    for i, line in enumerate(m.group(1).splitlines(), start=2):
+        indent = len(line) - len(line.lstrip(" "))
+        if in_block:
+            if not line.strip():
+                continue
+            if content_indent is None:
+                if indent <= key_indent:
+                    in_block = False
+                else:
+                    content_indent = indent
+                    continue
+            elif indent >= content_indent:
+                continue
+            else:
+                in_block = False
+                content_indent = None
+        naked = re.sub(r"'[^']*'|\"[^\"]*\"", "", line)  # 剥掉引号内内容，避免 #123 误报
+        if re.search(r"(^|\s)#", naked):
+            hits.append(f"L{i}:{line.strip()[:48]}")
+        # 剥行尾注释后再判块起始，避免同一行重复判定。
+        head = re.sub(r"\s+#.*$", "", naked)
+        if BLOCK_SCALAR_START.search(head):
+            in_block = True
+            key_indent = indent
+            content_indent = None
+    return hits
+
+
+def evidence_coverage_checks(rel: str, full: str, evidence,
+                             warnings: list[str]) -> None:
+    # 资源匹配关系表的每个 R# 都应在 evidence.covers 里有出处（warn）。
+    defined_R = set(re.findall(r"(?m)^\s*\|\s*(R\d+)\s*\|", strip_code_fences(full)))
+    if not defined_R:
+        return
+    covered: set[str] = set()
+    for e in (evidence or []):
+        if isinstance(e, dict):
+            for c in (e.get("covers") or []):
+                covered |= set(re.findall(r"\bR\d+\b", str(c)))
+    missing = defined_R - covered
+    if missing:
+        warnings.append(f"{rel}: 证据覆盖: {', '.join(sorted(missing))} 未在 evidence.covers "
+                        f"标注出处（每条资源匹配关系都应有证据）")
 
 
 def scan_patterns(path: str, rel: str, patterns, level: str, errors, warnings) -> None:
@@ -200,17 +271,31 @@ def section_by_prefix(regions: dict[str, str], prefix: str) -> str:
     return ""
 
 
-def structure_checks(rel: str, full: str, etype: str, warnings: list[str]) -> None:
-    """正文结构校验（warn）：核心三节必填；system 另需 是什么/组件与架构。"""
+def retrievability_checks(rel: str, fm: dict, warnings: list[str]) -> None:
+    """检索入口：symptoms / aliases 为空 → warn（不阻断）。
+
+    所有条目都是链路/系统型通用排查参考；具体报错由消费方按错误码自行归类到对应链路，
+    不在库里建独立条目。消费方靠条目 frontmatter 做关键词检索
+    （search.py：frontmatter 语义字段权重 3、正文权重 1），口语化现象、缩写与
+    中英文叫法没写进这两项就命不中；error_codes 与「异常归因速查」表同属必写全的
+    检索入口，前者由写作自检保证，后者由 structure_checks 的核心节校验兜底。
+    """
+    empty = [k for k in ("symptoms", "aliases") if not fm.get(k)]
+    if empty:
+        warnings.append(
+            f"{rel}: 检索入口缺失: {'/'.join(empty)} 为空——条目的 frontmatter 是关键词检索主入口，"
+            f"起草请写全 symptoms（口语+术语）、error_codes（错误码/状态码/事件 reason/响应标志）、"
+            f"aliases（缩写/中英文叫法）与「异常归因速查」表（现象→环节号）"
+        )
+
+
+def structure_checks(rel: str, full: str, warnings: list[str]) -> None:
+    """正文结构校验（warn）：所有条目按模板固定结构写全，五节均为必填核心节。"""
     headings = list(extract_sections(full).keys())
-    core = ["正常链路", "逐环节排查", "异常归因速查"]
+    core = ["是什么", "组件与架构", "正常链路", "逐环节排查", "异常归因速查"]
     for c in core:
         if not any(h.startswith(c) for h in headings):
-            warnings.append(f"{rel}: 正文缺核心节「{c}」（模板固定结构：正常链路→逐环节排查→异常归因速查）")
-    if etype == "system":
-        for c in ["是什么", "组件与架构"]:
-            if not any(h.startswith(c) for h in headings):
-                warnings.append(f"{rel}: type=system 缺节「{c}」（issue 可省略）")
+            warnings.append(f"{rel}: 正文缺核心节「{c}」（所有条目都按模板固定结构写全）")
 
 
 def anchor_checks(rel: str, full: str, warnings: list[str]) -> None:
@@ -264,21 +349,14 @@ def anchor_checks(rel: str, full: str, warnings: list[str]) -> None:
                             warnings.append(f"{rel}: 锚点: 速查表「环节」列引用了未定义的 {ref}")
 
 
-def _dup_exempt(first_rel: str, second_rel: str, related_graph: dict[str, list[str]],
-                entries_by_rel: dict[str, dict], cur_type: str, cur_domain: str) -> bool:
-    """重复错误码豁免：双向 related，或 一 system 一 issue 且同 domain。
+def _dup_exempt(first_rel: str, second_rel: str, related_graph: dict[str, list[str]]) -> bool:
+    """重复错误码豁免：仅双向 related 的关联条目。
 
-    注意：second_rel（当前条目）尚未写入 entries_by_rel（在去重循环之后才追加），
-    故当前条目的 type/domain 由调用方显式传入，只查 first_rel 的归档信息。
+    同 domain 的重复错误码一律提醒人工确认（是否同一链路拆成两条），除非两条目显式
+    互指 related。
     """
-    if (second_rel in related_graph.get(first_rel, [])
-            and first_rel in related_graph.get(second_rel, [])):
-        return True
-    a = entries_by_rel.get(first_rel)
-    if (a and {a.get("type"), cur_type} == {"system", "issue"}
-            and a.get("domain") == cur_domain):
-        return True
-    return False
+    return (second_rel in related_graph.get(first_rel, [])
+            and first_rel in related_graph.get(second_rel, []))
 
 
 def collect_pairs(knowledge_dir: str) -> list[tuple[str, str]]:
@@ -292,7 +370,7 @@ def collect_pairs(knowledge_dir: str) -> list[tuple[str, str]]:
     return sorted(pairs)
 
 
-def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
+def build_entries(pairs: list[tuple[str, str]]):
     """扫描 + 校验。pairs = [(path, rel), …]。返回 (entries, errors, warnings)。"""
     errors: list[str] = []
     warnings: list[str] = []
@@ -300,7 +378,6 @@ def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
     seen_codes: dict[tuple[str, str], str] = {}
     superseded_graph: dict[str, str] = {}
     related_graph: dict[str, list[str]] = {}
-    entries_by_rel: dict[str, dict] = {}
 
     for path, rel in pairs:
         full = read_full(path)
@@ -309,6 +386,19 @@ def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
         if "<!--" in full:
             errors.append(f"{rel}: 条目内含 HTML 注释（<!--）——注释对消费方模型可见，"
                           f"是绕过扫描的隐蔽注入通道，知识条目禁止注释")
+
+        # frontmatter 里的 YAML 注释同样对消费方模型可见（与 HTML 注释同通道）
+        fm_comments = frontmatter_comments(full)
+        if fm_comments:
+            errors.append(f"{rel}: frontmatter 含 YAML 注释（条目禁注释，说明写在 guide）："
+                          f"{'; '.join(fm_comments)}")
+
+        # 模板未填完优先判定：跳过 YAML 解析，避免 PyYAML 报错淹没真正原因
+        marker_pre = unfilled_marker(path)
+        if marker_pre:
+            errors.append(f"{rel}: 模板未填完——{marker_pre}"
+                          f"（请先替换全部 {{{{填写：…}}}} 占位符再校验）")
+            continue
 
         fm = parse_frontmatter(path)
         if not fm:
@@ -335,9 +425,6 @@ def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
         elif scope and scope != top:
             errors.append(f"{rel}: scope={scope} 与所在目录 {top}/ 不一致")
 
-        if fm.get("updated") and not DATE_RE.match(str(fm["updated"])):
-            errors.append(f"{rel}: updated 不是 YYYY-MM-DD: {fm['updated']}")
-
         conf = str(fm.get("confidence", "")).lower()
         if conf and conf not in CONFIDENCE_ENUM:
             errors.append(f"{rel}: confidence 非法: {conf}（应为 verified / observed-once / doc-sourced）")
@@ -346,11 +433,14 @@ def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
         if fm.get("status") and status not in STATUS_ENUM:
             errors.append(f"{rel}: status 非法: {status}（应为 active / deprecated / disputed）")
 
-        # 条目类型：system / issue（省略按 issue 处理），决定体量软上限
-        etype = str(fm.get("type", "issue")).lower()
-        if fm.get("type") and etype not in TYPE_ENUM:
-            errors.append(f"{rel}: type 非法: {etype}（应为 system / issue，省略=issue）")
-            etype = "issue"
+        # frontmatter 不含 type 字段：条目形态只有链路/系统型通用排查参考，报错由消费方按错误码归类。
+        if "type" in fm:
+            errors.append(f"{rel}: frontmatter 含不允许的 type 字段（条目形态只有一种）——"
+                          f"请删掉本行；所有条目一律按链路/系统型通用排查参考写全")
+
+        # 条目不体现具体时间：frontmatter 不含 updated 字段，残留判 error 防旧写法回流。
+        if "updated" in fm:
+            errors.append(f"{rel}: frontmatter 含不允许的 updated 字段（条目不写任何日期）——请删掉本行")
 
         # evidence 必填：非空数组且每项含 run + what；covers 可选字符串数组
         ev = fm.get("evidence")
@@ -368,11 +458,6 @@ def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
             v = fm.get(k)
             if v is not None and (not isinstance(v, list) or not all(isinstance(x, str) for x in v)):
                 errors.append(f"{rel}: {k} 必须是字符串数组（数字型错误码/版本要加引号）")
-
-        # 模板残留
-        marker = unfilled_marker(path)
-        if marker:
-            errors.append(f"{rel}: {marker}")
 
         # 自动扫描：高置信度密钥 error；泛词密钥/PII/注入 warn（全文含代码围栏）
         scan_patterns(path, rel, SECRET_ERROR_RES, "error", errors, warnings)
@@ -422,27 +507,23 @@ def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
                 related_graph[rel] = related_paths
             # 非字符串数组的类型错误已由 LIST_FIELDS 统一报出
 
+        # 检索入口校验（warn）：symptoms/aliases 不可为空
+        retrievability_checks(rel, fm, warnings)
         # 正文结构校验（warn）
-        structure_checks(rel, full, etype, warnings)
+        structure_checks(rel, full, warnings)
         # 锚点完整性校验（warn 级）
         anchor_checks(rel, full, warnings)
+        # 证据覆盖度（warn 级）：每个 R# 应有 evidence.covers 出处
+        evidence_coverage_checks(rel, full, ev, warnings)
 
-        # 体量软上限（按 type 分级）：超限 warn，人工判断是否按子系统拆分
-        lim_lines, lim_bytes = SIZE_LIMITS[etype]
+        # 体量软上限（单档）：只提醒「是否混进两个主题」，不作为拆分依据
+        lim_lines, lim_bytes = SIZE_LIMITS
         n_lines = len(full.splitlines())
         n_bytes = len(full.encode("utf-8"))
         if n_lines > lim_lines or n_bytes > lim_bytes:
-            warnings.append(f"{rel}: 体量 {n_lines} 行/{n_bytes}B 超出 type={etype} 软上限"
-                            f"（{lim_lines} 行/{lim_bytes}B）——建议拆分并用 related 串联")
-
-        # 过期告警
-        if fm.get("updated") and DATE_RE.match(str(fm["updated"])):
-            try:
-                days = (today - datetime.date.fromisoformat(str(fm["updated"]))).days
-                if days > STALE_DAYS:
-                    warnings.append(f"{rel}: updated 已 {days} 天未更新（>{STALE_DAYS}），建议复核")
-            except ValueError:
-                pass
+            warnings.append(f"{rel}: 体量 {n_lines} 行/{n_bytes}B 超出软上限"
+                            f"（{lim_lines} 行/{lim_bytes}B）——先确认是否混进了两个主题/两条链路；"
+                            f"确属同一链路与软件边界就写全不拆，读取用 read_entry.py --sections/--hop 切片")
 
         # 重复项：同 domain 下同一错误码出现在多个条目（大小写不敏感），关联豁免
         domain_lower = str(fm.get("domain", "")).lower()
@@ -450,7 +531,7 @@ def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
             key = (domain_lower, str(code).lower())
             if key in seen_codes:
                 first_rel = seen_codes[key]
-                if not _dup_exempt(first_rel, rel, related_graph, entries_by_rel, etype, domain_lower):
+                if not _dup_exempt(first_rel, rel, related_graph):
                     warnings.append(f"重复错误码 {code}: {first_rel} 与 {rel}（确认是否有意并存，否则应合并）")
             else:
                 seen_codes[key] = rel
@@ -458,7 +539,6 @@ def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
         entries.append({
             "file": rel,
             "schema": fm.get("schema"),
-            "type": etype,
             "domain": fm.get("domain"),
             "scope": scope,
             "components": fm.get("components") or [],
@@ -470,7 +550,6 @@ def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
             "status": status,
             "confidence": conf,
         })
-        entries_by_rel[rel] = {"type": etype, "domain": domain_lower}
 
     # superseded_by 指向校验 + 循环引用检测
     by_rel = {e["file"]: e for e in entries}
@@ -497,17 +576,8 @@ def build_entries(pairs: list[tuple[str, str]], today: datetime.date):
     return entries, errors, warnings
 
 
-def _parse_today(s: str | None) -> datetime.date:
-    if s:
-        try:
-            return datetime.date.fromisoformat(s)
-        except ValueError:
-            die(f"--today 格式应为 YYYY-MM-DD，得到: {s}")
-    return datetime.date.today()
-
-
 def main() -> None:
-    ap = argparse.ArgumentParser(description="知识条目校验器（index.yaml 机制已移除）")
+    ap = argparse.ArgumentParser(description="知识条目校验器（只校验，不生成索引文件）")
     ap.add_argument("knowledge_root", nargs="?", default=None,
                     help="知识库根目录（默认：本 skill 目录，即 scripts/ 的上一级）")
     ap.add_argument("--file", default=None,
@@ -516,11 +586,7 @@ def main() -> None:
                     help="落盘前校验整个草稿目录（可搭配 --scope；否则按目录名推断 oss/personal）")
     ap.add_argument("--scope", choices=["oss", "personal"], default=None,
                     help="草稿的 scope（与 --file / --draft-dir 搭配）")
-    ap.add_argument("--today", default=None,
-                    help="固定过期判断基准日 YYYY-MM-DD（默认当天，测试用）")
     args = ap.parse_args()
-
-    today = _parse_today(args.today)
 
     if args.file:
         if not args.scope:
@@ -543,7 +609,7 @@ def main() -> None:
             die(f"条目目录不存在: {knowledge_dir}")
         pairs = collect_pairs(knowledge_dir)
 
-    entries, errors, warnings = build_entries(pairs, today)
+    entries, errors, warnings = build_entries(pairs)
 
     for w in warnings:
         sys.stderr.write(f"warn: {w}\n")

@@ -181,7 +181,7 @@ def self_test():
             rc = e.code
         assert rc == NOT_WIRED, "expected 42 (missing root), got %d" % rc
 
-        # 场景7：被引用脚本不再是孤儿（引用来自引用它的 md 即可）
+        # 场景7：被引用脚本不算孤儿（引用来自引用它的 md 即可）
         wr("SKILL.md", "use `audit/scripts/lonely.py`\n")
         findings = check(tmp, os.path.join(tmp, "audit", "scripts"))
         assert not any("lonely.py" in f for f in findings), findings

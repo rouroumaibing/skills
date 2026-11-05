@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Detect change-narrative comments / doc lines that violate the
-clean-change-comments convention (rule 1).
+clean-change-comments convention.
 
 The script only *flags* candidates for human review — it never edits files.
 False positives are expected and acceptable, because the goal is to surface
@@ -11,11 +11,12 @@ Usage:
     python detect_change_narrative.py <file-or-dir> --diff [BASE]   # only lines added by git diff BASE (default HEAD)
 
 In --diff mode every newly-added comment line is flagged as a candidate that
-must be classified against rule 2 (keep only 防回退 / 非直觉约束) or removed;
-lines matching a rule-1 narration marker are labeled with that marker.
+must be classified against the why-comment exception (防回退 / 非直觉约束) or removed;
+lines matching a narration marker are labeled with that marker.
 
-Exit code is 0 when no candidates are found, 1 when at least one is found
-(so it can be wired into CI as a soft check).
+Recall-only `[待归类]` labels surface comment shapes for human classification;
+they are never error-level judgements. Exit code is 0 when no candidates
+are found, 1 when at least one is found (CI soft check).
 """
 from __future__ import annotations
 
@@ -25,12 +26,10 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
-# Change-narrative marker patterns (rule 1 forbidden narration).
-# Conservative: these describe a *transition* ("was X, now Y"), which is what
-# the convention bans from code comments and doc bodies.
+# Change-narrative marker patterns: conservative transitions ("was X, now Y") only.
 # ---------------------------------------------------------------------------
 MARKERS: List[re.Pattern[str]] = [
     # original-state narration
@@ -47,11 +46,7 @@ MARKERS: List[re.Pattern[str]] = [
     re.compile(r"previously|used to|was using|changed from|no longer|deprecated|refactored|migrated to|replaced with|now uses|instead of", re.IGNORECASE),
 ]
 
-# Decision-date leak: a date stamped together with a decision marker, which
-# must live ONLY in 变更历史/CHANGELOG — never in body, titles, subtitles,
-# status lines, or inline (rule 4). Examples: （2026-10-20 设计已定） /
-# （2026-09-28 裁定） / （2026-10-08 修正）. Both word-before-date and
-# word-after-date orderings inside the parentheses are matched.
+# Decision-date leak: dates belong only in 变更历史/CHANGELOG; both word-date orders match.
 DECISION_DATE_RE = re.compile(
     r"[（(][^）)\n]{0,18}?20\d\d-\d\d-\d\d[^）)\n]{0,18}?"
     r"(裁定|修正|拍板|设计已定|设计裁定|决策|已定|钢人裁定|落地|已落地)"
@@ -66,6 +61,30 @@ BARE_DATE_RE = re.compile(r"[（(]20\d\d-\d\d-\d\d[）)]")
 # A heading (title / subtitle / section) must never carry a date in parentheses.
 HEADING_DATE_RE = re.compile(r"[（(]20\d\d-\d\d-\d\d")
 MARKERS.extend([DECISION_DATE_RE, BARE_DATE_RE])
+
+# ---------------------------------------------------------------------------
+# Config-comment markers: config comments describe only user-facing fields, not internals.
+# ---------------------------------------------------------------------------
+CONFIG_EXTS = {"yaml", "yml", "toml", "ini", "cfg"}
+CONFIG_VERBOSE_MARKERS: List[re.Pattern[str]] = [
+    re.compile(r"顺序[：:].*[→>]"),                  # detection order with arrows = internal algorithm
+    re.compile(r"NODE_IP|POD_IP"),                   # concrete internal env var names
+    re.compile(r"默认路由出口"),                        # internal detection mechanism
+    re.compile(r"探测失败兜底|失败兜底|兜底监听"),          # fallback-logic narration
+    re.compile(r"bind-interfaces|listen-address"),    # dnsmasq internal fragments
+    re.compile(r"restrict default|fudge \d"),         # ntp internal fragments
+    re.compile(r"k8s 环境变量|环境变量（|环境变量\)"),       # internal env-var explanation
+    re.compile(r"匹配语义|相邻新增行|已知盲区|白名单会漏检|历史教训|探测顺序|目录名跳过"),
+]
+
+# Recall-only markers: mechanically matchable, but whether a comment is
+# justified is a human call, so these never become error-level hits.
+PRINCIPLE_MARKERS: List[Tuple[str, re.Pattern[str]]] = [
+    ("[指路导读]", re.compile(r"见\s*README|详见|参见|见下|见上|见\s*docstring|无需配置|see README|refer to", re.I)),
+    ("[实现复述]", re.compile(r"遍历|依次|逐行|逐项|先.{0,24}再|然后|最后|拼接|折叠空白|兜底|回退到")),
+    ("[时间/版本标记]", re.compile(r"\bv\d+\s*(?:[:：]|起|加固|对齐|前|后)|20\d\d-\d\d-\d\d|解析值")),
+]
+LONG_COMMENT_BLOCK_MIN = 4
 
 # Headings whose *content* is a legitimate home for history/decisions — skip
 # their bodies when scanning Markdown.
@@ -179,9 +198,7 @@ def _md_bodies(lines: List[str]):
         if heading:
             title = heading.group(1)
             skipping = bool(SKIP_SECTION_RE.search(title))
-            # A heading (title / subtitle / section) must not carry a date in
-            # parentheses — the date belongs in the 变更历史 chapter, not in
-            # the heading. Flag non-skip headings that leak one (rule 4).
+            # A heading date belongs in 变更历史, never in the title.
             if not skipping and HEADING_DATE_RE.search(title):
                 yield i, raw
             continue
@@ -233,6 +250,29 @@ def _scan_vue(lines: List[str]):
                 yield i, ct
 
 
+def _long_comment_blocks(lines: List[str], ext: str) -> List[int]:
+    """First line of each run of >= N non-decorative comment lines."""
+    if ext in MD_EXTS or ext == "vue":
+        return []
+    marker = LINE_COMMENT.get(ext, "#")
+    allowed = set(marker + " -=*#")
+    out: List[int] = []
+    run: List[int] = []
+    for i, raw in enumerate(lines, start=1):
+        s = raw.strip()
+        is_comment = s.startswith(marker)
+        decorative = is_comment and set(s) <= allowed
+        if is_comment and not decorative:
+            run.append(i)
+        else:
+            if len(run) >= LONG_COMMENT_BLOCK_MIN:
+                out.append(run[0])
+            run = []
+    if len(run) >= LONG_COMMENT_BLOCK_MIN:
+        out.append(run[0])
+    return out
+
+
 def scan_file(path: str, ext: str) -> List[Hit]:
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -244,11 +284,11 @@ def scan_file(path: str, ext: str) -> List[Hit]:
     lines = content.splitlines()
 
     if ext in MD_EXTS:
-        targets = _md_bodies(lines)
+        targets = list(_md_bodies(lines))
     elif ext == "vue":
-        targets = _scan_vue(lines)
+        targets = list(_scan_vue(lines))
     else:
-        targets = ((i, _comment_text(line, ext)) for i, line in enumerate(lines, start=1))
+        targets = [(i, _comment_text(line, ext)) for i, line in enumerate(lines, start=1)]
 
     for line_no, text in targets:
         if not text:
@@ -259,6 +299,34 @@ def scan_file(path: str, ext: str) -> List[Hit]:
                 hits.append(Hit(path=path, line_no=line_no,
                                 pattern=pat.pattern, text=text.strip()))
                 break  # one pattern label per line is enough
+
+    # Config comments leaking implementation internals: flag only, never edit.
+    if ext in CONFIG_EXTS:
+        for line_no, text in targets:
+            if not text:
+                continue
+            for pat in CONFIG_VERBOSE_MARKERS:
+                if pat.search(text):
+                    hits.append(Hit(path=path, line_no=line_no,
+                                    pattern="[配置冗余]" + pat.pattern, text=text.strip()))
+                    break
+
+    # Recall only: surface code-comment shapes for human classification, never judge or edit.
+    # Markdown bodies are prose, not comments, so principle markers do not apply there.
+    reported = {h.line_no for h in hits}
+    if ext not in MD_EXTS:
+        for line_no, text in targets:
+            if not text or line_no in reported:
+                continue
+            label = next((lbl for lbl, pat in PRINCIPLE_MARKERS if pat.search(text)), None)
+            if label:
+                hits.append(Hit(path=path, line_no=line_no,
+                                pattern="[待归类]" + label, text=text.strip()))
+                reported.add(line_no)
+        for line_no in _long_comment_blocks(lines, ext):
+            if line_no not in reported:
+                hits.append(Hit(path=path, line_no=line_no,
+                                pattern="[待归类][多行注释块]", text=lines[line_no - 1].strip()))
     return hits
 
 
@@ -291,9 +359,8 @@ def _git_root(path: str) -> Optional[str]:
 
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
-# Label for newly-added comment lines that carry no narration marker: they
-# still must be classified against rule 2 (keep only 防回退 / 非直觉约束).
-NEW_COMMENT_LABEL = "新增注释·待归类(rule2)"
+# Newly-added comments with no narration marker still need human classification.
+NEW_COMMENT_LABEL = "新增注释·待归类(按核心原则)"
 
 
 def scan_diff(paths: List[str], base: str, exts: List[str]) -> List[Hit]:
@@ -301,8 +368,8 @@ def scan_diff(paths: List[str], base: str, exts: List[str]) -> List[Hit]:
 
     Necessity of a comment cannot be judged mechanically, so the gate is
     presence itself: every newly-added comment line becomes a candidate that
-    must be classified (rule 2) or removed. Lines matching a rule-1 narration
-    marker are labeled with that marker instead. Markdown body lines are
+    must be classified against the core principle or removed. Lines matching a
+    narration marker are labeled with that marker instead. Markdown body lines are
     content rather than comments, so only narration / decision-date matches
     are flagged there.
     """
@@ -362,9 +429,19 @@ def scan_diff(paths: List[str], base: str, exts: List[str]) -> List[Hit]:
                 if not ct:
                     continue
                 matched = next((p for p in MARKERS if p.search(ct)), None)
+                if matched is None and ext in CONFIG_EXTS:
+                    cvm = next((p for p in CONFIG_VERBOSE_MARKERS if p.search(ct)), None)
+                    if cvm is not None:
+                        hits.append(Hit(path=os.path.join(repo, cur_path), line_no=new_ln,
+                                        pattern="[配置冗余]" + cvm.pattern, text=ct.strip()))
+                        continue
+                if matched is None:
+                    review = next((lbl for lbl, p in PRINCIPLE_MARKERS if p.search(ct)), None)
+                    label = "[待归类]" + review if review else NEW_COMMENT_LABEL
+                else:
+                    label = matched.pattern
                 hits.append(Hit(path=os.path.join(repo, cur_path), line_no=new_ln,
-                                pattern=matched.pattern if matched else NEW_COMMENT_LABEL,
-                                text=ct.strip()))
+                                pattern=label, text=ct.strip()))
             # "-" (deleted) and " " (context) lines never advance new_ln
     return hits
 
