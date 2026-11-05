@@ -85,8 +85,16 @@ def score_entry(fm: dict, body: str, terms: list[str]) -> int:
     score = 0
     for t in terms:
         tl = t.lower()
-        fm_hit = tl in fm_text
-        body_hit = tl in body_lower
+        # 长度≤3 的纯 ASCII 词按词边界匹配，避免 gat 误中 gateway、503 误中 5031 等；
+        # 其余（含中文、长词）保持子串匹配，中文未命中再走 2-gram 回退。
+        short_ascii = (len(tl) <= 3 and tl.isascii())
+        if short_ascii:
+            pat = r"\b" + re.escape(tl) + r"\b"
+            fm_hit = bool(re.search(pat, fm_text))
+            body_hit = bool(re.search(pat, body_lower))
+        else:
+            fm_hit = tl in fm_text
+            body_hit = tl in body_lower
         if fm_hit:
             score += 3
         if body_hit:

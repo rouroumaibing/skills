@@ -14,7 +14,7 @@
 ## 路由（含预算与排序）
 
 1. 把线索（组件/版本/错误码/症状/环境）转译成查询关键词（匹配大小写不敏感；中文自然语句整词未命中时按 2-gram 重合度回退）；
-2. 递归全扫 `knowledge/`，按 frontmatter + 正文匹配（消费方脚本 `knowledge.py` 与知识层 `search.py` 同一套打分排序）；
+2. 递归全扫 `knowledge/`，按 frontmatter + 正文匹配（消费方直接调用 `scripts/search.py`，或 import 其 `score_entry`；**打分规则只在 `search.py` 维护一份**，不另存实现，避免双份漂移）；
 3. 默认只消费 `status: active` 的条目（`deprecated`/`disputed` 不取水）；
 4. **排序**：按匹配分数降序；同分按 `confidence` 优先级 `verified` > `observed-once` > `doc-sourced`；`envs` 命中当前环境的条目优先于环境无关条目；
 5. **预算**：读条目按**总字节/token 预算**（默认 16KB）而非只按条数——在预算内依次读入排序靠前的条目；单条目超预算或命中很深时，用 `scripts/read_entry.py` 按节读取：先读「正常链路」建立请求模型，再只读命中环节的「逐环节排查」小节与速查表相关行；`confidence: doc-sourced` 的条目引用时注明「来源为上游文档」，与运行时取证区分。
