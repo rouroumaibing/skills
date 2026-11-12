@@ -34,6 +34,16 @@ SKILL.md 只保留流程骨架；本文是字段、类型与规则的单一权�
 一次性个案记录，并随时间失效；来源定位用可复现的标识（文档名 + 版本 + 章节、运行时
 观测方式/证据位），不靠日期指认。
 
+**校验器兜底（error）**：`scripts/validate.py` 全文（含代码围栏、表格、图示、`evidence.run`、
+`source`）扫描具体时间，命中即 error。覆盖 `2026-11-06`、`2026/11/06`、`2026年11月`（含带日
+写法）、`2026-11-06T10:00:00Z` 这类 ISO 时间戳、syslog 与 access log 时间戳。版本号（如
+`1.34.2`）、端口范围（如 `30000-32767`）、UUID 不误报——UUID 在扫描前整体剥离。模式取值以
+`scripts/validate.py` 的 `DATE_TIME_RES` 常量为准，本文不抄正则。
+
+**无机制强制的部分**：不含数字的中文时效表述（「截至某日」「上次排查」）、epoch 秒级时间戳、
+自定义分隔符日期（如 `2026.11.06`）无法机械判定，靠落盘前的结构化 diff 确认；理由见
+`assets/entry-template-guide.md`「脱敏占位符」。
+
 **frontmatter 不含 `updated` 字段**：条目不体现具体时间，validate 不做过期复核；残留
 `updated` 判 **error**（与 `type` 字段同规）。复核条目是否有新证据靠 diff 与 `evidence` 追加体现。
 `assets/conflict-report-template.md` 要求运行时证据写「什么时间」是冲突报告的定位信息

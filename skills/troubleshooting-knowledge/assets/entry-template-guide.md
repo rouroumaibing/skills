@@ -111,6 +111,14 @@ validate 对 `symptoms` / `aliases` 为空发 **warn**；别用 `[]` 冒充已�
 理由：具体时间会把通用事实绑成一次性个案记录，读起来像某次故障纪要，也会随时间失效；
 来源定位用**可复现的标识**（上游文档名 + 版本 + 章节、运行时观测方式/证据位），不靠日期指认。
 
+validate 全文（含代码围栏、表格、图示）扫描具体时间并判 **error**：`2026-11-06`、
+`2026/11/06`、`2026年11月`、`2026-11-06T10:00:00Z` 以及 syslog / access log 时间戳都在列。
+版本号（`1.34.2`）、端口范围（`30000-32767`）、UUID 不会误报。模式取值见
+`scripts/validate.py` 的 `DATE_TIME_RES`。
+
+**无机制强制**：「截至某日」这类无数字时效表述、epoch 秒级时间戳、自定义分隔符日期
+（如 `2026.11.06`）机器判不了，靠落盘前的结构化 diff 确认（见「脱敏占位符」）。
+
 frontmatter 不含 `updated` 字段，写了会被 validate 判 error（与 `type` 字段同规）；validate
 不做过期复核。复核条目是否有新证据，靠 diff 与 `evidence` 追加体现，不靠日期。
 `assets/conflict-report-template.md` 里要求运行时证据写「什么时间」是**冲突报告的定位信息**
@@ -136,7 +144,7 @@ frontmatter 不含 `updated` 字段，写了会被 validate 判 error（与 `typ
 - [ ] 顺序：是什么 → 组件与架构 → 正常链路 → 逐环节 → 异常归因，异常没有混进前面
 - [ ] 零注释：条目里没有 `<!--`，frontmatter 里没有 YAML `#` 注释
 - [ ] 无 `updated` 字段：frontmatter 不写日期元信息（写了会 error）
-- [ ] 无具体时间：正文与 `evidence.run` / `source` 未写日期、访问日期、排查时间戳、「截至某日」
+- [ ] 无具体时间：正文与 `evidence.run` / `source` 未写日期、访问日期、排查时间戳、「截至某日」（日期/时间戳写法由 validate 判 error）
 - [ ] 无 `type` 字段：条目形态只有一种，frontmatter 不写 type（写了会 error）
 - [ ] 锚点：每个环节引用了 R#；逐环节覆盖全部 L#/P#；速查每行有环节
 - [ ] 证据覆盖：每个 R# 都在 `evidence[].covers` 有出处

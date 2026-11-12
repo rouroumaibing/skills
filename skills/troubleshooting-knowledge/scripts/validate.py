@@ -27,6 +27,8 @@ error（阻断）
 - oss 条目 superseded_by 或 related 指向 personal/ → error；related 自指 → error
 - 作废链循环引用 → error
 - frontmatter 不可解析且文件仍含 {{ 标记 → 报「模板未填完」（而非 frontmatter 缺失）
+- 条目含具体时间（公历日期 YYYY-MM-DD / YYYY/MM/DD、中文 YYYY年M月、日志时间戳）→ error；
+  全文含代码围栏扫描，版本号 / 端口范围 / UUID 不误报（UUID 扫描前剥离）
 
 warn（不阻断）
 - 泛词密钥（secret/token/api_key 赋值）→ warn（带词边界，排除 imagePullSecret/secretName 等）
@@ -119,6 +121,44 @@ INJECTION_RES = [
     (r"rm\s+-rf\s+/", "危险删除命令"),
     (r"(?i)curl\b[^|]*\|\s*(sudo\s+)?(ba)?sh\b", "远程脚本执行"),
 ]
+
+# 具体时间（error 级）：条目是长期可复用的链路参考，不对应某一次排查。
+# 版本号 1.34.2、端口范围 30000-32767 不含「4 位年份 + 分隔符 + 月日」形态；
+# UUID 含数字与连字符，扫描前整体剥离（见 date_time_checks）。
+DATE_TIME_RES = [
+    (r"(?<!\d)(?:19|20)\d{2}[-/](?:0?[1-9]|1[0-2])[-/](?:0?[1-9]|[12]\d|3[01])"
+     r"(?:[T ]\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?(?!\d)",
+     "公历日期 / ISO 时间戳"),
+    (r"(?<!\d)(?:19|20)\d{2}\s*年\s*(?:0?[1-9]|1[0-2])\s*月"
+     r"(?:\s*(?:0?[1-9]|[12]\d|3[01])\s*日?)?(?:\s*\d{1,2}:\d{2}(?::\d{2})?)?",
+     "中文日期"),
+    (r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}\s+"
+     r"\d{1,2}:\d{2}:\d{2}\b", "syslog 日志时间戳"),
+    (r"\b\d{1,2}/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*/"
+     r"(?:19|20)\d{2}:\d{2}:\d{2}:\d{2}\s*[+-]\d{4}\b", "access log 时间戳"),
+]
+UUID_RE = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
+
+
+def date_time_checks(rel: str, full: str, errors: list[str]) -> None:
+    # 全文含代码围栏：表格、图示、日志样例里的具体时间同样不写；等长替换保持行号偏移。
+    text = UUID_RE.sub(lambda m: " " * len(m.group(0)), full)
+    seen: set[int] = set()
+    hits: list[tuple[int, str, str]] = []
+    for pat, label in DATE_TIME_RES:
+        for m in re.finditer(pat, text):
+            if m.start() not in seen:
+                seen.add(m.start())
+                hits.append((m.start(), label, m.group(0)[:40]))
+    hits.sort()
+    for start, label, snippet in hits[:5]:
+        line = full.count("\n", 0, start) + 1
+        errors.append(f"{rel}:L{line}: 检出具体时间（{label}）「{snippet}」——条目不写任何日期/时间戳；"
+                      f"来源定位用文档名+版本+章节或观测方式/证据位")
+    if len(hits) > 5:
+        errors.append(f"{rel}: 另有 {len(hits) - 5} 处具体时间未逐条列出，请一并删除")
+
 
 MARKERS = ("〔推论〕", "〔待复核〕")
 
@@ -382,6 +422,9 @@ def build_entries(pairs: list[tuple[str, str]]):
     for path, rel in pairs:
         full = read_full(path)
 
+        # 具体时间（error）：全文含代码围栏，先于 frontmatter 解析，避免解析失败时被跳过。
+        date_time_checks(rel, full, errors)
+
         # HTML 注释禁令：条目里不允许任何注释（隐蔽注入通道，全文最先查）
         if "<!--" in full:
             errors.append(f"{rel}: 条目内含 HTML 注释（<!--）——注释对消费方模型可见，"
@@ -438,7 +481,7 @@ def build_entries(pairs: list[tuple[str, str]]):
             errors.append(f"{rel}: frontmatter 含不允许的 type 字段（条目形态只有一种）——"
                           f"请删掉本行；所有条目一律按链路/系统型通用排查参考写全")
 
-        # 条目不体现具体时间：frontmatter 不含 updated 字段，残留判 error 防旧写法回流。
+        # 条目不体现具体时间：frontmatter 不含 updated 字段；正文与来源里的日期由全文扫描兜底。
         if "updated" in fm:
             errors.append(f"{rel}: frontmatter 含不允许的 updated 字段（条目不写任何日期）——请删掉本行")
 

@@ -3,7 +3,7 @@ name: troubleshooting-knowledge
 description: "知识提取与维护：把排查结论/文档事实抽成脱敏条目沉淀进 knowledge/（oss 可分发 / personal 不出库），可检索、更新、作废。触发词：提取知识、沉淀知识、写知识库、知识库整理、检索知识库、建知识条目、把这次排查结论存下来、知识库里有没有关于 X 的记录。想沉淀或检索知识就用；不用于排查过程本身。| English: extract & maintain redacted troubleshooting knowledge entries; not for running the troubleshooting process."
 metadata:
   agent_created: true
-  version: "15"
+  version: "16"
 ---
 
 # Troubleshooting Knowledge（知识层）
@@ -29,7 +29,7 @@ Python **3.8+**（脚本含 `from __future__ import annotations`）+ PyYAML（`p
 - 模板**零注释**（HTML 与 YAML 注释都没有）：消费方整篇读入条目，注释对模型可见，是绕过密钥/注入扫描的隐蔽通道。字段取值与填写说明见 `assets/entry-template-guide.md`（非条目，不被扫描）。
 - **条目只有一种形态**：链路/系统型通用排查参考；frontmatter 不含 `type` 字段（写了判 error）。具体报错（503、CrashLoopBackOff 之类）不单独建条目，走对应的通用排查参考——错误码属于哪条链路由消费方模型按语义自行判断，这类归类 AI 可直接识别，库里不维护「错误码 → 条目」映射表；把线索写进对应条目的 `error_codes` / `symptoms` 与「异常归因速查」表即可。正文固定结构、R#/L#/P# 锚点、confidence 定义、粒度软上限、校验项清单：**全部见 `references/schema.md`**，此处不复述。
 - `frontmatter` 必带 `schema: 1`；`evidence` 必填非空（每项 run/what，可选 covers）。理由：知识层只收有出处的事实，推测由河道分级标注、不落库。
-- **条目不写具体时间**：条目是长期可复用的通用参考、不对应某一次排查；正文与 `evidence.run` / `source` 用「文档名+版本+章节」「观测方式/证据位」指认来源，不写日期、访问日期、排查时间戳、`截至某日`。理由：具体时间会把通用事实绑成一次性个案、随时间失效。frontmatter 不含 `updated` 字段（残留判 error），validate 不做过期复核。细则见 `references/schema.md`「不写具体时间」。
+- **条目不写具体时间**：条目是长期可复用的通用参考、不对应某一次排查；正文与 `evidence.run` / `source` 用「文档名+版本+章节」「观测方式/证据位」指认来源，不写日期、访问日期、排查时间戳、`截至某日`。理由：具体时间会把通用事实绑成一次性个案、随时间失效。frontmatter 不含 `updated` 字段（残留判 error），validate 全文扫描日期与日志时间戳判 error（放行版本号 / 端口范围 / UUID），不做过期复核。细则见 `references/schema.md`「不写具体时间」。
 
 ## 分层与 scope
 
