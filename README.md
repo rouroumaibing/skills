@@ -26,6 +26,9 @@ All skills in this repository. Click links for full documentation.
 | [`skill-freshness-audit`](skills/skill-freshness-audit/SKILL.md) | 审计 skill 库的新鲜度 / 冗余 / 事实性过期：按 0→1 私有知识（persist）/ 1→100 流程代偿（sunset 候选）/ 治理边界（never-remove）分类，附可追溯行号证据；建议型，绝不自动修改 / 删除 / 下线任何 skill | `审计skill库` `检查skill是否过时` `skill保质期` `哪些skill冗余` `skill特有性检查` `生成skill审计清单` `模型升级后复查skill` `清理/精简过时的skill` |
 | [`automation-task-execution`](skills/automation-task-execution/SKILL.md) | AI 辅助自动化任务执行协议：缺口分析（不运行就把缺口按谁能补分流：AI 自取 / 人提供 / 运行时探针 / 可默认假设，B 类一轮集中提问）→ 真实探索（先跑真实请求、不写自动化代码）→ 执行方案 → 冒烟跑通一个最简用例 → 批量实现 → 经验沉淀；配失败分类与授权边界（哪些可自行修复、哪些必须先问人）、断言强度守恒（跑通 ≠ 正确）、上下文文件条目结构与定期复核；附三个只报告不改文件的脚本：断言强度回退检测（同一断言主体上精确比较被换成弱检查、字段断言消失、异常被吞、用例被跳过）、沉淀条目字段 / 时效校验、跨文档规则一致性核对 | `自动化任务` `生成自动化代码` `把手工用例转成自动化` `接口自动化` `UI 测试自动化` `E2E 脚本` `用例代码化` `冒烟跑通一个用例` `探索性执行` `缺口分析` `流程缺什么信息` |
 | [`ambitious`](skills/ambitious/SKILL.md) | 按 Felix Rieseberg「高度·深度·广度」三维度把普通任务改写成更有野心的版本：先出方案（列明工具、野心目标、外部验证方式）、等用户确认再动手；强调"更深非更大"、外部裁判验证、环境前提（MCP/可装软件/可接数据），附何时不用与代价提示 | `/ambitious` `更有野心` `目标抬升` `深度改写` `外部验证` `把任务想高/想深/想宽` |
+| [`skillormcp`](skills/skillormcp/SKILL.md) | 判定一项能力该做成 Skill 还是 MCP，并审计仓库里 skill/MCP 落点是否错位（能力错位）；走 skills/↔mcps/ 缺口判定；顾问 + 审计两种模式，只报建议不改文件 | `判定skill还是MCP` `skill和mcp怎么选` `落点审计` `能力错位` `下沉mcp` `拆分建议` `新增能力该放哪` `skill是否在干MCP的活` `发布前核对落点` `@skillormcp` |
+
+**审计规则**：新增或调整 `skills/` 与 `mcps/` 内容前，可调用 `@skillormcp`（或 `/skillormcp`）审计落点是否错位（能力错位）。该 skill 只报建议、不改文件。
 
 ## 开发规范 / Development Guide
 

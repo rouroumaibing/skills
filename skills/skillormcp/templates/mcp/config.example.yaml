@@ -1,0 +1,8 @@
+# 复制为 config.yaml(已 gitignore)。这里只放非敏感项与凭证的“引用名”,不放凭证本身。
+allowed_targets:        # 目标白名单
+  - <target-a>
+  - <target-b>
+approval_ttl_seconds: 300
+credential_refs:        # 引用名 -> 环境变量名(值由密钥管理注入服务端)
+  <ref_key>: <ENV_VAR_NAME>
+rate_limit_per_minute: 30
