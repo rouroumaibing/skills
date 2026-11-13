@@ -102,11 +102,18 @@ RULES: List[Rule] = [
              "否则会误触 Phase 2「待确认项非空必须停下」的停止条件",
     ),
     Rule(
-        name="四对账清单",
-        pattern=r"断言[、+\s]*代码模式[、+\s]*资源池姿态[、+\s]*TODO\s*清零",
+        name="六对账清单",
+        pattern=r"断言[、+\s]*代码模式[、+\s]*资源池姿态[、+\s]*TODO\s*清零[、+\s]*写死值清零[、+\s]*门控改动标注",
         docs=("SKILL.md", "templates/execution-plan.md", "references/prompt-templates.md"),
-        note="完成判据对账扩为四项：断言、代码模式、资源池姿态、TODO 清零；"
+        note="完成判据对账扩为六项：断言、代码模式、资源池姿态、TODO 清零、写死值清零、门控改动标注；"
              "枚举顺序与措辞三处必须一致，漏一项就回到只看退出码的老路",
+    ),
+    Rule(
+        name="静态门四件枚举",
+        pattern=r"收集用例[、，][^。\n]{0,40}编译[^。\n]{0,40}变量引用核对[^。\n]{0,40}登录态前置检查",
+        docs=("SKILL.md", "references/failure-triage.md", "references/prompt-templates.md"),
+        note="不可逆操作静态门的四件枚举，顺序与措辞三处必须一致；"
+             "完整核对表在 SKILL.md，failure-triage 与提示词为简版引用",
     ),
     Rule(
         name="骨架示意不得照抄",
@@ -143,6 +150,14 @@ RULES: List[Rule] = [
         note="§2 两个新增维度须相邻保留；任一被删、改名或调序都会使匹配消失并被报为未声明",
         unique=True,
     ),
+    Rule(
+        name="B/D类双向正反论证",
+        pattern=r"B/D 类裁决可配双向正反论证（对每个拟做/不做的项构造最强正反方），裁决记录随缺口表交付",
+        docs=("SKILL.md", "templates/gap-analysis.md", "references/prompt-templates.md"),
+        note="B/D 类裁决可按需加装双向正反论证，裁决记录随 gap-analysis.md 一并交付；"
+             "三处措辞逐字一致，漏一处就等于该能力没有交付入口",
+        unique=True,
+    ),
 ]
 
 # Wordings that must not appear anywhere. These are superseded phrasings
@@ -154,6 +169,8 @@ FORBIDDEN: List[Tuple[str, str]] = [
     ("AI 不确定或做了假设",
      "旧措辞会把「做了假设」的地方塞回待确认项，触发「待确认项非空必须停」。"
      "正确口径：待确认项只收「AI 无法判断的地方」，默认假设放 §4b"),
+    ("四对账",
+     "对账清单已扩为六项（六对账），残留「四对账」字样说明该处未同步更新"),
 ]
 
 
