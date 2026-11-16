@@ -1,8 +1,13 @@
 # 复制为 config.yaml(已 gitignore)。这里只放非敏感项与凭证的“引用名”,不放凭证本身。
-allowed_targets:        # 目标白名单
+# 加载路径:环境变量 MCP_CONFIG 指定的路径,缺省为当前工作目录下的 config.yaml。
+# 必填项缺失会在启动时报错(不静默降级);其余键进入 Settings.extra,按需在 Settings 上加具名字段。
+allowed_targets:        # 目标白名单(必填,不能为空)
   - <target-a>
   - <target-b>
 approval_ttl_seconds: 300
 credential_refs:        # 引用名 -> 环境变量名(值由密钥管理注入服务端)
   <ref_key>: <ENV_VAR_NAME>
 rate_limit_per_minute: 30
+# 业务连接参数(按需启用;由 Settings.require()/get() 读取,不要硬编码进 tool 代码)
+# base_url: https://<host>:<port>
+# verify_tls: true

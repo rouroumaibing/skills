@@ -21,6 +21,8 @@
       * 白名单（明确不报）：page_token、next_token、cursor、csrf_token。
   - 只豁免扫描器【自身包路径】（自审干净），被审计 skill 自带的 templates/ 正常纳入审计，
     不存在“按目录名全局豁免”的绕过口。
+  - 判定口径与 SKILL.md 一致: MCP = Agent SDK 的能力面, 技能 = 用法面; 命中硬缺口
+    (凭证/连通性/强制性)无逃生舱, 但低频场景可走成本维度换部署形态(需人工确认)。
 
 用法:
     python audit_placement.py <path>          # 扫描单个目录或 skills/ 全仓
@@ -79,6 +81,14 @@ CRED_KEY = (r"(?:password|passwd|pwd|passphrase|secret|client[_-]?secret|"
 CRED_ASSIGN = re.compile(CRED_KEY + r"\s*[:=]\s*(\S+)", re.IGNORECASE)
 # 合规引用前缀（环境变量 / 占位 / 从安全源读取）
 CRED_REF_RE = re.compile(r"^(os\.environ|getenv|\$\{|<|\>)", re.IGNORECASE)
+# 环境变量名形态：全大写 + 至少一个下划线分隔（SERVICE_API_TOKEN / API_KEY）。
+# 这是「引用名」而非「凭证值」——config 里常见 credential_refs: {key: ENV_NAME}。
+# 保守取舍：要求下划线，否则 PASSWORD123 / HUNTER2 这类大写口令会被误放行。
+# 已知边界：含下划线的全大写口令（PASSWORD_X）仍会被放行，需人工复核。
+CRED_ENVNAME_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
+# 占位符形态：<ENV_VAR_NAME> / <your-token> 这类尖括号包裹的模板值。
+# 与 CRED_REF_RE 的 ^< 只覆盖「以 < 开头」，这里补齐「整串被 <...> 包裹」。
+CRED_PLACEHOLDER_RE = re.compile(r"^<[^<>]+>$")
 CRED_SAFE_CALL_RE = re.compile(r"^(secrets\.|_secret|vault|os\.environ|getenv)", re.IGNORECASE)
 CRED_TYPE_RE = re.compile(r"^(str|int|bool|float|Optional|List|Dict|Union|Any|None)\b")
 CRED_MENTION_WORD = re.compile(r"\b(凭证|credential|密钥|私钥|口令|密码)\b")
@@ -135,8 +145,16 @@ def scan_cred(line):
     m = CRED_ASSIGN.search(line)
     if m:
         val = m.group(1)
+        # 先剥掉引号再判定：引号本身不改变「这是不是凭证值」的判断
+        bare = val.strip()
+        if len(bare) >= 2 and bare[0] in "\"'" and bare[-1] == bare[0]:
+            bare = bare[1:-1]
         if CRED_REF_RE.match(val):
             cats.add("凭证提及")          # 环境变量/占位引用，合规
+        elif CRED_PLACEHOLDER_RE.match(bare):
+            cats.add("凭证提及")          # <ENV_VAR_NAME> 模板占位，合规
+        elif CRED_ENVNAME_RE.match(bare):
+            cats.add("凭证提及")          # SERVICE_API_TOKEN 这类环境变量名，合规
         elif re.match(r"^[\"']", val):
             cats.add("凭证字面值")        # 引号包裹值（含开引号未闭合）
         elif CRED_TYPE_RE.match(val):
@@ -213,8 +231,13 @@ def scan_mcp_antipattern(line):
     val = m.group(2)
     if CRED_TYPE_RE.match(val):
         return False                       # 类型标注 password: str
+    bare = val.strip()
+    if len(bare) >= 2 and bare[0] in "\"'" and bare[-1] == bare[0]:
+        bare = bare[1:-1]
     if CRED_REF_RE.match(val) or CRED_SAFE_CALL_RE.match(val):
         return False                       # 环境变量/占位/安全源读取，合规
+    if CRED_PLACEHOLDER_RE.match(bare) or CRED_ENVNAME_RE.match(bare):
+        return False                       # 占位符 / 环境变量名形态，合规
     if re.match(r"^[\"']", val):
         return False                       # 引号值由 scan_cred 处理
     return True
@@ -420,6 +443,7 @@ GATE_PHRASE_RE = re.compile(
 MCP_CHECKLIST = (
     "[MCP 设计人工确认清单] ①一个API一个tool(避免万能tool)? ②方法是否写进tool description"
     "(应留给skill)? ③是否纯计算也做成了MCP(本可做成skill)? ④写tool是否带限时一次性审批令牌+审计日志?"
+    " ⑤SDK类比自检: 能力面(凭证/连接/权限/审计)是否只在服务端, 用法面(顺序/状态机/确认门)是否留给技能?"
 )
 
 
@@ -556,6 +580,9 @@ def print_report(report, target, warnings=None):
               "分页 token(page_token/next_token)等合法用途不视为反模式, 请人工确认。")
     if not red_found:
         print("   未发现红线信号(仅有提示/人工确认项, 见上方 [人工确认] 条目)。")
+    if red_found & {"凭证字面值", "内网/连通性", "有状态/常驻", "写操作", "MCP反模式"}:
+        print("   提示: 命中凭证/连通性/写操作类门槛但使用频率低时, 需人工过成本维度"
+              "(频率 x 维护成本 x 复用客户端数)再决定是否常驻 MCP; 逃生舱只改部署形态, 不放宽凭证红线。")
     print("   注: 含内网/私有地址信号时, 是否适合公开仓库由人确认(本skill不裁决发布范围)。")
     print("(ADVISORY ONLY: 以上为建议, 不自动移动/修改任何文件。)")
     return 1 if red_found else 0
@@ -851,9 +878,56 @@ def self_test():
     finally:
         shutil.rmtree(d10, ignore_errors=True)
 
+    # 10b) 凭证分级：环境变量名 / 占位符形态不得判为红线（端到端实测发现）
+    try:
+        _ref_cases = [
+            ("service_access_token: SERVICE_API_TOKEN", False),
+            ("service_client_secret: SERVICE_CLIENT_SECRET", False),
+            ("api_key: API_KEY", False),
+            ("aws_secret_access_key: AWS_SECRET_ACCESS_KEY", False),
+            ('service_access_token: "<ENV_VAR_NAME>"', False),
+            ("service_access_token: <ENV_VAR_NAME>", False),
+            ("password: hunter2", True),
+            ('password: "hunter2"', True),
+            ("access_token: PASSWORD123", True),
+            ("access_token: HUNTER2", True),
+            ("api_key: abcdef123456", True),
+            ("secret: s3cr3t-value", True),
+        ]
+        for _line, _want_red in _ref_cases:
+            _cats = scan_cred(_line)
+            _is_red = "凭证字面值" in _cats
+            if _is_red != _want_red:
+                print(f"FAIL: 凭证分级误判: {_line!r} 期望红线={_want_red} 实际={_is_red}")
+                ok = False
+    except Exception as e:
+        print(f"FAIL: 凭证分级断言无法执行: {e}")
+        ok = False
+
+    # 11) MCP 设计清单含 SDK 类比自检项(第⑤条), 与 SKILL.md 逐条一致
+    if "⑤SDK类比自检" not in MCP_CHECKLIST:
+        print("FAIL: MCP 设计人工确认清单缺少第⑤条 SDK 类比自检")
+        ok = False
+
+    # 12) 清单第⑤条与 SKILL.md 描述一致(规范化空白/全角标点后比对, 防止两处措辞漂移)
+    def _norm(s):
+        s = re.sub(r"\s+", "", s)
+        return s.translate(str.maketrans("：（）？，、／", ":()?,,/"))
+    try:
+        with open(os.path.join(SCANNER_PKG, "SKILL.md"), "r", encoding="utf-8") as f:
+            skill_doc = f.read()
+        tail5 = MCP_CHECKLIST[MCP_CHECKLIST.index("⑤"):]
+        if _norm(tail5) not in _norm(skill_doc):
+            print("FAIL: 清单第⑤条与 SKILL.md 描述不一致(规范化后未包含)")
+            ok = False
+    except (OSError, ValueError) as e:
+        print(f"FAIL: 清单一致性比对无法执行: {e}")
+        ok = False
+
     if ok:
         print("OK: self-test 通过(正向/反向AST/脱敏/后缀/反例/绕过口/argv/字典Auth/"
-              "确认门/解析失败回退/参数名强弱分级与白名单/非PythonMCP人工确认提示均覆盖)。")
+              "确认门/解析失败回退/参数名强弱分级与白名单/非PythonMCP人工确认提示/"
+              "SDK类比清单/清单第⑤条跨文档一致性均覆盖)。")
         return 0
     return 1
 
