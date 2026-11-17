@@ -3,7 +3,7 @@ name: skillormcp
 description: "触发词：判定skill还是MCP、skill和mcp怎么选、落点审计、能力错位、下沉mcp、拆分建议、新增能力该放哪、skill是否在干MCP的活、发布前核对落点、@skillormcp。| Decides whether a capability should be a Skill or an MCP by gap types and the Agent-SDK split (MCP = capability surface, skill = its usage manual), and audits skill/MCP placement for misplacement (a skill doing MCP's job — holding credentials, connecting to an intranet or bastion, keeping stateful sessions, exposing a universal tool, or performing external write operations); reports placement plus deployment shape, a README draft, and a starter scaffold (skill or MCP); never edits or moves files. | ADVISORY ONLY：只报建议、不改文件、不移动任何东西。"
 metadata:
   agent_created: true
-  version: "11"
+  version: "12"
 ---
 
 # skillormcp（判定 Skill / MCP 落点 + 审计错位，建议型 / Advisory）
@@ -195,6 +195,7 @@ README草稿: <一段文案> 或 脚手架指针: <templates/...>
 - **成本维度不是放宽红线**：低频逃生舱只改变部署形态，不改变凭证不进对话 / 技能 / tool 参数与硬拦截要求。
 - **定期复核按缺口类型**：用"缺哪类东西"而非"AI 现在能不能"复核；被模型覆盖的一致性 / 接入型技能、被平台原生能力替代的自建 MCP，都要做降级评估。
 - **统一配置，函数经入参传变量**：MCP 侧所有配置由一处收口（`Settings` 之类）并校验必填项，内部函数把配置当入参接收；**配置不得成为 tool 参数**——tool 签名就是给 Agent 看的 schema，配置一旦成为参数就会进上下文，等于把内部结构交给模型改。连接参数写配置，不写死在 tool 代码里。
+- **MCP 骨架五个硬约定**（`templates/mcp/server.py` 已实现，改骨架前先对照）：① 双传输按 `MCP_TRANSPORT` 环境变量切换（stdio 本地单租户 / http 远程多租户绑内网地址，启动校验拒绝 `0.0.0.0`/`::` 通配与公网 IP）；② 凭证收口在服务端（每个引用独立 env 回退链、只在同引用内回退，支持成对凭证与 static/oauth2 获取模式，凭证只进请求头，401 刷新后重试一次，链用尽报错不跨引用借用）；③ HTTP 唯一出口 `request_api`（统一超时与 verify_tls 默认开，禁止 tool 里另起 HTTP 客户端）；④ 写护栏 `write_policy` 二选一（gate 按写类别的 env 开关、缺失即拒，写类别是服务端常量不接受 Agent 指定 / token 两步令牌），写拒绝与令牌失效一律 `PermissionError`；⑤ `@audited` 定义即应用（敏感值哈希脱敏、三条路径留痕），列表输出走 `paginate()` 截断分页。
 - **凭证要能续期**：OIDC 授权服务器签发的 client_credentials access_token 通常是短命的（有效期由 IdP 侧配置，常见几分钟），骨架若把 token 当静态环境变量读，MCP 跑一会儿就会整体 401。凭证应在服务端用 client secret 自动换取并缓存续期（client secret 同样只走环境变量）。
 - **自检**：`scripts/audit_placement.py --self-test` 用内置正向/反向 AST/脱敏/后缀/反例/绕过口/argv 列表/字典 Authorization/确认门断言；改匹配规则后必须先过 self-test（含解析失败回退、参数名强弱分级与白名单、环境变量名/占位符不得误判红线）。
 

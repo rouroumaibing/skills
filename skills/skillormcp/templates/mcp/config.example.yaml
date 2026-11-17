@@ -1,13 +1,40 @@
-# 复制为 config.yaml(已 gitignore)。这里只放非敏感项与凭证的“引用名”,不放凭证本身。
-# 加载路径:环境变量 MCP_CONFIG 指定的路径,缺省为当前工作目录下的 config.yaml。
-# 必填项缺失会在启动时报错(不静默降级);其余键进入 Settings.extra,按需在 Settings 上加具名字段。
-allowed_targets:        # 目标白名单(必填,不能为空)
+# 复制为 config.yaml(已 gitignore)。这里只放非敏感项与凭证的"引用名", 不放凭证本身。
+# 加载路径: 环境变量 MCP_CONFIG 指定的路径, 缺省为当前工作目录下的 config.yaml。
+# 必填项缺失会在启动时报错(不静默降级); 其余键进入 Settings.extra, 按需在 Settings 上加具名字段。
+allowed_targets:        # 目标白名单(必填, 不能为空)
   - <target-a>
   - <target-b>
-approval_ttl_seconds: 300
-credential_refs:        # 引用名 -> 环境变量名(值由密钥管理注入服务端)
-  <ref_key>: <ENV_VAR_NAME>
-rate_limit_per_minute: 30
-# 业务连接参数(按需启用;由 Settings.require()/get() 读取,不要硬编码进 tool 代码)
-# base_url: https://<host>:<port>
-# verify_tls: true
+
+write_policy: token     # 写护栏二选一(必填): gate 为按写类别的 env 开关, token 为 prepare/apply 两步令牌
+# gate 模式专用:
+# write_gate_env_prefix: MCP_WRITE_ALLOW_   # 开关 env 名前缀; <前缀><写类别大写>=1 才放行, 缺失即拒
+# token 模式专用:
+approval_ttl_seconds: 300                   # 确认令牌有效期(秒)
+
+rate_limit_per_minute: 30                   # 限流(读、写分开计量, 各自一份配额)
+request_timeout_seconds: 30                 # request_api 统一超时
+verify_tls: true                            # TLS 校验默认开; 确要关闭必须在此显式写出
+
+credential_refs:        # 凭证引用名 -> 获取声明(值由服务端从 env/密钥管理取得, 永不作 tool 参数)
+  <ref_key>:
+    mode: static            # static | oauth2_cc
+    env:                    # 本凭证自己的 env 回退链; 401 刷新时链内下移, 只在同凭证内回退
+      - <PRIMARY_ENV_VAR>
+      - <BACKUP_ENV_VAR>
+    # header_name: X-Api-Key   # 缺省用 Authorization: Bearer; 声明后改用自定义请求头
+  <oauth_ref_key>:
+    mode: oauth2_cc          # client_credentials 模式: 用成对凭证换 token, 到期前自动复用, 401 强制重换
+    token_url: https://<idp-host>/token
+    scopes: [<scope>]
+    pair:                    # 成对凭证: 每个成员各有独立 env 回退链
+      client_id:
+        - <CLIENT_ID_ENV>
+      client_secret:
+        - <CLIENT_SECRET_ENV>
+
+# 业务连接参数(按需; 由 Settings.require()/get() 读取, 不要硬编码进 tool 代码)
+base_url: https://<host>:<port>
+
+# http 传输专用(仅 MCP_TRANSPORT=http 时需要; stdio 单租户无需)
+# http_host: <内网IP或内网主机名>   # 禁止 0.0.0.0 / :: 通配; 公网 IP 会被启动校验拒绝
+# http_port: 8080
