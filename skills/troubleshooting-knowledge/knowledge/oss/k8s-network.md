@@ -3,11 +3,11 @@ schema: 1
 domain: k8s-network
 scope: oss
 components: [Pod 网络实现, CNI, kube-proxy, 集群DNS, NetworkPolicy, Ingress 控制器, Gateway API 控制器, 容器运行时, kubelet]
-symptoms: [网络不通不知从哪查起, Pod 之间不通, 访问 Service 不通, 外部访问不通, 集群外域名访问失败, NetworkPolicy 不生效, 同节点能通跨节点不通, 解析与连通性问题难区分]
+symptoms: [网络不通不知从哪查起, Pod 之间不通, 访问 Service 不通, 外部访问不通, 集群外域名访问失败, 同节点能通跨节点不通, 解析与连通性问题难区分]
 error_codes: ["NetworkPolicy", "CNI", "NAT", "ClusterIP", "NodePort", "LoadBalancer"]
 versions: ["Kubernetes v1.32 至 v1.36 文档", "Pod 网络、Service 代理、NetworkPolicy 的具体实现随所选组件而异"]
 aliases: [k8s网络, 集群网络, Kubernetes 网络模型, Pod 网络, 网络链路, 网络总览, 网络排查入口, CNI, 流量路径]
-related: [oss/k8s-service.md, oss/kube-proxy.md, oss/k8s-dns.md, oss/coredns.md, oss/k8s-ingress.md, oss/k8s-gateway-api.md, oss/k8s-pod.md, oss/k8s-node.md]
+related: [oss/k8s-service.md, oss/kube-proxy.md, oss/k8s-dns.md, oss/coredns.md, oss/k8s-ingress.md, oss/k8s-gateway-api.md, oss/k8s-pod.md, oss/k8s-node.md, oss/k8s-cni.md, oss/k8s-networkpolicy.md, oss/flannel.md, oss/calico.md, oss/cilium.md, oss/istio.md, oss/ingress-nginx.md]
 status: active
 confidence: doc-sourced
 evidence:
@@ -26,7 +26,7 @@ source: Kubernetes 官方文档（Services, Load Balancing, and Networking）；
 - **一句话定位**：Kubernetes 网络的整体模型和四条主链路：Pod 与 Pod、Pod 到 Service、集群内到集群外、集群外到集群内。每条链路经过哪些环节、每个环节归谁实现、出了问题该去看哪个条目。
 - **解决什么问题**：网络问题往往一开始不知道在哪一层。本条先把现象定位到具体链路和环节，再指向对应的专项条目，避免在不相关的层上浪费时间。
 - **谁在用、从哪进来**：任何"访问不通 / 解析失败 / 外部进不来 / 策略不生效"类问题，都从这里先定位链路。
-- **边界（不负责什么）**：各环节的详细机制由专项条目负责：Service排查参考、kube-proxy排查参考、集群DNS排查参考、CoreDNS排查参考、Ingress排查参考、GatewayAPI排查参考、Pod排查参考、节点排查参考。Pod 网络实现（CNI 插件）本身与 NetworkPolicy 的具体执行，取决于所选软件，本批没有写对应条目。
+- **边界（不负责什么）**：各环节的详细机制由专项条目负责：Service排查参考、kube-proxy排查参考、集群DNS排查参考、CoreDNS排查参考、Ingress排查参考、GatewayAPI排查参考、Pod排查参考、节点排查参考。Pod 网络如何建立见 CNI排查参考，NetworkPolicy 的语义见 NetworkPolicy排查参考；具体 CNI 插件的内部转发与策略执行取决于所选软件，见 flannel排查参考、calico排查参考、cilium排查参考。
 - **形态与版本**：这个模型只有少数部分由 Kubernetes 自己实现（Service 与 EndpointSlice 的管理、kube-proxy 的默认服务代理），其余由外部组件提供，没有对应组件时相应 API 存在但无效果。
 - **术语**：
   - Pod 网络 —— 负责 Pod 之间通信的那一层，由 Pod 网络实现（常见为 CNI 插件）管理
@@ -109,7 +109,7 @@ flowchart TB
 - **P1 Pod 接入网络**
   - 正常：Pod 创建后很快拿到 IP。
   - 异常：Pod 长时间停在创建中，没有 IP。
-  - 区分点：这一步由运行时与 Pod 网络实现负责，先看 Pod 事件，再看网络插件本身。
+  - 区分点：这一步由运行时与 Pod 网络实现负责，先看 Pod 事件，再看网络插件本身，调用机制见 CNI排查参考。
   - 证据落点：Pod 事件与状态，见 Pod排查参考；网络插件的日志。
 - **P2 Service 数据面**
   - 正常：每个节点都有 Service 对应的规则。
@@ -124,7 +124,7 @@ flowchart TB
 - **P4 NetworkPolicy**
   - 正常：策略按预期放行或拒绝。
   - 异常：策略不生效。
-  - 区分点：确认所用网络实现支持并启用了 NetworkPolicy，不支持时 API 存在但没有效果（R4）。
+  - 区分点：确认所用网络实现支持并启用了 NetworkPolicy，不支持时 API 存在但没有效果（R4），策略语义见 NetworkPolicy排查参考。
   - 证据落点：网络实现的能力说明；策略与 Pod 标签的匹配。
 - **P5 入口控制器**
   - 正常：控制器在运行并落实规则。
@@ -139,7 +139,7 @@ flowchart TB
 - **L2 跨节点 Pod 互通**
   - 正常：跨节点 Pod 之间直接通。
   - 异常：跨节点不通，或只有特定节点之间不通。
-  - 区分点：节点之间的底层网络、封装方式与 Pod 网络实现的路由都可能是原因；这一环的细节取决于具体网络插件，本批没有对应条目〔待复核〕。
+  - 区分点：节点之间的底层网络、封装方式与 Pod 网络实现的路由都可能是原因；这一环的细节取决于具体网络插件，通用的 Pod 网络建立见 CNI排查参考，具体插件的转发机制见 flannel排查参考、calico排查参考、cilium排查参考。
   - 证据落点：节点间的连通性；网络插件日志。
 - **L3 Pod 到 Service**
   - 正常：经 Service 访问与直连后端一致。
@@ -169,11 +169,11 @@ flowchart TB
 | 用 IP 能通、用名字不通 | P3 | DNS 层问题而非连通性（R5） | 解析结果 | oss/k8s-dns.md |
 | 直连 Pod IP 通、经 Service 不通 | L3 P2 | Service 或服务代理层问题（R3） | EndpointSlice；节点规则 | oss/k8s-service.md、oss/kube-proxy.md |
 | 个别节点访问 Service 失败 | P2 L3 | 这些节点的服务代理规则缺失或陈旧（R3） | 失败节点规则 | oss/kube-proxy.md |
-| 同节点通、跨节点不通 | L2 | 跨节点的 Pod 网络问题（R2） | 节点间连通性；网络插件日志 | |
-| Pod 一直没有 IP | P1 | Pod 网络接入失败（R1） | Pod 事件；网络插件日志 | oss/k8s-pod.md |
+| 同节点通、跨节点不通 | L2 | 跨节点的 Pod 网络问题（R2） | 节点间连通性；网络插件日志 | oss/flannel.md、oss/calico.md、oss/cilium.md |
+| Pod 一直没有 IP | P1 | Pod 网络接入失败（R1） | Pod 事件；网络插件日志 | oss/k8s-pod.md、oss/k8s-cni.md |
 | 外部访问不通（HTTP） | L6 P5 | 入口控制器或规则层问题（R6） | 控制器状态与规则 | oss/k8s-ingress.md、oss/k8s-gateway-api.md |
 | 外部访问不通（NodePort 或 LB） | L5 | 四层入口或 Service 层问题（R3、R6） | Service 类型、流量策略、节点规则 | oss/k8s-service.md、oss/kube-proxy.md |
-| NetworkPolicy 写了不生效 | P4 | 网络实现不支持或未启用策略（R4） | 网络实现的能力说明 | |
+| NetworkPolicy 写了不生效 | P4 | 网络实现不支持或未启用策略（R4） | 网络实现的能力说明 | oss/k8s-networkpolicy.md、oss/flannel.md、oss/calico.md、oss/cilium.md |
 | 探针失败导致 Pod 不就绪 | P1 L1 | 节点到 Pod 的访问异常（R7） | Pod 状况与探针配置 | oss/k8s-pod.md |
 | 节点失联后其上网络异常 | P1 | 节点状态问题，不属于纯网络层（R7） | 节点状态 | oss/k8s-node.md |
 
@@ -196,5 +196,5 @@ flowchart TB
 - **来源**：Kubernetes 官方「Services, Load Balancing, and Networking」概念页的多个版本，没有做过运行时取证。
 - **〔待复核〕项**：出向流量是否做地址转换及受策略限制的细节；跨节点互通的具体实现方式。这些取决于所用网络插件，本批没有对应条目。
 - **版本差异**：本条的模型描述在 v1.32 至 v1.36 的文档中保持一致，具体组件的行为请看各专项条目。
-- **未覆盖**：具体 Pod 网络实现（如 Cilium、Calico）的内部机制；NetworkPolicy 的选择与叠加规则；节点本地 DNS 缓存；双栈、拓扑感知路由与 Service 内部流量策略的细节；服务网格；Windows 节点上的网络差异。
+- **未覆盖**：节点本地 DNS 缓存；双栈、拓扑感知路由与 Service 内部流量策略的细节；服务网格（见 istio排查参考）；Windows 节点上的网络差异。
 - **related**：见 frontmatter。

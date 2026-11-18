@@ -4,10 +4,10 @@ domain: kube-proxy
 scope: oss
 components: [kube-proxy, iptables, ipvs, nftables, apiserver]
 symptoms: [Service 部分节点不通, 大集群规则更新慢, 切换代理模式后行为变化, 客户端源 IP 被改写, kube-proxy 停止后规则残留, 后端选择不均匀]
-error_codes: ["sync_proxy_rules_duration_seconds"]
+error_codes: ["kubeproxy_sync_proxy_rules_duration_seconds"]
 versions: ["Kubernetes v1.30 至 v1.35 文档", "iptables 模式自 v1.28 起只更新有变化的 Service 与 EndpointSlice", "ipvs 模式自 v1.35 起标记为 deprecated"]
 aliases: [kube-proxy, 服务代理, 代理模式, proxy mode, iptables 模式, ipvs 模式, nftables 模式, 虚拟 IP 实现]
-related: [oss/k8s-service.md, oss/k8s-network.md]
+related: [oss/k8s-service.md, oss/k8s-network.md, oss/cilium.md, oss/metrics-control-plane.md]
 status: active
 confidence: doc-sourced
 evidence:
@@ -23,7 +23,7 @@ source: Kubernetes 官方文档（Virtual IPs and Service Proxies）
 - **一句话定位**：kube-proxy 是每个节点上把 Service 的虚拟 IP 落成转发规则的组件。它监听 Service 和 EndpointSlice，在本机生成规则，把访问 ClusterIP 或 NodePort 的流量转到后端端点。
 - **解决什么问题**：Service 与 EndpointSlice 只是 API 对象，真正让流量转起来的是各节点上的规则。"Service 看着正常但访问不通"，问题常常出在规则这一层。
 - **谁在用、从哪进来**：集群内所有走 Service 虚拟 IP 的访问，以及经 NodePort 进入节点的外部流量；ExternalName 类型不经过它。
-- **边界（不负责什么）**：后端地址与端点条件如何产生见 Service排查参考；名字解析见集群DNS排查参考；如果集群用别的组件替代了 kube-proxy（例如 eBPF 数据面的 CNI），规则由那个组件生成，本条不适用。
+- **边界（不负责什么）**：后端地址与端点条件如何产生见 Service排查参考；名字解析见集群DNS排查参考；如果集群用别的组件替代了 kube-proxy（例如 eBPF 数据面的 Cilium，见 cilium排查参考），规则由那个组件生成，本条不适用。
 - **形态与版本**：以 DaemonSet 或节点进程形式运行，由配置决定模式。Linux 有 iptables、ipvs、nftables 三种；Windows 只有 kernelspace。ipvs 自 v1.35 起标记为 deprecated。
 - **术语**：
   - 代理模式 —— kube-proxy 用哪种内核机制写规则
@@ -88,7 +88,7 @@ flowchart LR
 ### 正常表现（健康基线）
 - 每个节点都有 kube-proxy 在运行（或有明确的替代组件）。
 - 端点变化后，各节点规则在 minSyncPeriod 量级的时间内跟上。
-- 大集群里规则同步耗时（指标 sync_proxy_rules_duration_seconds）保持在较低水平，没有持续攀升。
+- 大集群里规则同步耗时（指标 kubeproxy_sync_proxy_rules_duration_seconds）保持在较低水平，没有持续攀升。
 
 ## 逐环节排查（沿链路对照）
 - **P1 启动与模式**
@@ -105,7 +105,7 @@ flowchart LR
   - 正常：变化后规则在短时间内更新，同步耗时稳定。
   - 异常：大集群里规则更新很慢；minSyncPeriod 被设得过大导致延迟；同步耗时指标持续升高。
   - 区分点：端点早已变化，但流量仍打到旧端点，指向同步延迟，调整 minSyncPeriod 前要先看同步耗时指标。
-  - 证据落点：指标 sync_proxy_rules_duration_seconds；该节点上的实际规则。
+  - 证据落点：指标 kubeproxy_sync_proxy_rules_duration_seconds；该节点上的实际规则。
 - **P4 周期对账与清理**
   - 正常：规则偶尔被外部改动后能在一个 syncPeriod 内被修回。
   - 异常：kube-proxy 停止或被移除后，内核里的规则仍残留；被外部组件改写的规则迟迟未恢复。
@@ -137,7 +137,7 @@ flowchart LR
 |---|---|---|---|---|
 | 只有部分节点访问某 Service 失败 | P2 P3 L1 | 这些节点规则缺失或陈旧（R1） | 失败节点的规则与 kube-proxy 日志 | |
 | 端点早已更新但流量仍打旧后端 | P3 | 规则同步延迟或 minSyncPeriod 过大（R3） | 同步耗时指标；节点规则 | |
-| 大集群变更后很久才生效 | P3 | 规则数量大、同步耗时长（R3） | sync_proxy_rules_duration_seconds | |
+| 大集群变更后很久才生效 | P3 | 规则数量大、同步耗时长（R3） | kubeproxy_sync_proxy_rules_duration_seconds | |
 | 换了代理模式后行为不一致 | P1 | 不同模式的实现与边缘语义不同（R2） | 当前生效的模式 | |
 | ipvs 下个别 Service 行为异常 | P1 L2 | ipvs 无法正确实现全部 Service 边缘情形，且已 deprecated（R2） | 模式与 Service 特性组合 | |
 | kube-proxy 停掉后规则还在 | P4 | 内核规则不会随进程退出自动清理（R6） | 节点上残留的规则 | |
@@ -147,7 +147,7 @@ flowchart LR
 ## 状态、事件与日志语义
 | 来源 | 取值 | 含义 | 常见出现环节 |
 |---|---|---|---|
-| 指标 | sync_proxy_rules_duration_seconds | 一次规则同步的耗时；大集群里持续偏高说明同步成为瓶颈 | P3 |
+| 指标 | kubeproxy_sync_proxy_rules_duration_seconds | 一次规则同步的耗时；大集群里持续偏高说明同步成为瓶颈 | P3 |
 | 配置 | iptables.minSyncPeriod | 两次规则同步之间的最短间隔，期间的变化会合并 | P3 |
 | 配置 | iptables.syncPeriod | 周期性对账与部分清理的间隔 | P4 |
 
@@ -163,6 +163,7 @@ flowchart LR
 
 ## 边界与置信度说明
 - **来源**：Kubernetes 官方「Virtual IPs and Service Proxies」文档的多个版本，没有做过运行时取证。
+- **指标名核实**：规则同步耗时的指标全名是 kubeproxy_sync_proxy_rules_duration_seconds（带 kubeproxy_ 前缀），此外还有 kubeproxy_network_programming_duration_seconds；名字取自微软 Azure Monitor 的默认采集清单，属二手来源，各指标的含义见 控制面与节点组件指标排查参考〔待复核〕。
 - **版本差异**：iptables 模式自 v1.28 起按变更增量更新；ipvs 自 v1.35 起标记为 deprecated；文档对 minSyncPeriod、syncPeriod 默认值的描述以所用版本的文档为准，升级前先核对。
 - **未覆盖**：各模式下具体生成的链与规则结构；nftables 模式的内部细节；节点端口监听地址范围、localhost NodePort 的处理；conntrack 相关调优；Windows kernelspace 模式；无端点时各模式的具体丢弃或拒绝行为。
 - **related**：见 frontmatter。
