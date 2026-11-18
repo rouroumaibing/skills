@@ -143,6 +143,20 @@ A-2,D-2,src/y.go,Player.Play,abc1235,T-2,linked
       "commit": "abc1234",
       "actor": "approver",
       "tool_version": "human/na"
+    },
+    {
+      "type": "screenshot",
+      "path": "reports/screenshots/run-detail-error.png",
+      "corresponds_to": ["S-RUN-ERR"],
+      "generated_by": "verify-harness",
+      "sha256": "m5n6o7p8...",
+      "commit": "abc1234",
+      "tool_version": "verify-harness/1.0.0",
+      "scenario_id": "run-detail-error",
+      "baseline_ref": "reports/baselines/run-detail-error@1440x900.png",
+      "baseline_sha256": "q1r2s3t4...",
+      "viewport": "1440x900",
+      "diff_metric": {"kind": "pixel_ratio", "value": 0.0003, "threshold": 0.001}
     }
   ],
   "required_present": ["gate_report","trace_matrix","review_report"],
@@ -161,6 +175,14 @@ A-2,D-2,src/y.go,Player.Play,abc1235,T-2,linked
 ```
 
 `evidence_pack_check.py` 校验：所有 `required_present` 类型都存在；每个 `corresponds_to` 的判据 ID 在契约中存在；每个 item 的 `sha256` 与实际文件一致（防止 AI 改了证据还谎称未改）；`contract_sha256` 与契约 `contract_hash` 一致（证明证据对应被锁定的那一份）。
+
+> **截图是一等证据类型（`screenshot`）**：前端交互项目的 done 判据可把截图
+> 列为 `required_present` item——它与 `gate_report` 一样走既有 sha256 / 文件存在
+> 校验（检查器对 item 类型无白名单，无需扩展脚本），且必须由 harness / CI
+> 收集，不接受 agent 自报"界面正常"。`scenario_id` 关联验收场景（截图 ↔ 用例
+> 一一映射），`baseline_ref` + `baseline_sha256` 指向受保护基线，`diff_metric`
+> 记录比对值与阈值；基线文件列入 `protected_paths`，改动须人审（RT-18）。
+> 规格与异常态驱动清单见 `verification-program.md` §4.10。
 
 **绑定校验（`--check-bindings`，D-09/D-12）**：manifest 顶层还须带 `commit_sha`（本次提交，7-40 位 hex）、`base_sha`（合入基线）、`runner_identity`（**仅接受 `ci:` / `platform:` 前缀**——平台/CI 身份，拒绝 `cli:` 或自填身份）、`governance_commit`（与 CI 传入的治理目录 tree SHA 比对，不一致即拒）与 `contract_hash`（与契约一致；契约变更后旧证据作废）。CI 可再传 `--expected-commit <PR HEAD>` 精确绑定。缺任一绑定即视为"无法证明证据与当前变更相关"，不得进入放行。
 

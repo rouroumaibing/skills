@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-r"""static_risk_check.py —— R-IMP-004 实装（合入必需检查）+ R-IMP-003 空断言部分。
+r"""static_risk_check.py —— R-IMP-004 实装（合入必需检查）+ R-IMP-003 空断言部分
++ R-VER-009 flaky 信号部分（v14）。
 
 审什么：diff **新增行**中的测试完整性反模式（内置模式 + 项目追加规则）：
   1. 跳过标记：pytest.mark.skip/skipif/xfail、pytest.skip()、t.Skip、it/describe.skip、
@@ -10,7 +11,13 @@ r"""static_risk_check.py —— R-IMP-004 实装（合入必需检查）+ R-IMP-
      catch (...) {} 等。except 头与空体之间可夹至多一行注释（新增或上下文注释，
      v13 起统一为检出，方向保守）；
   3. 空断言凑数：assert True / assertTrue(true) / expect(true).toBe(true) 等
-     （对应 R-IMP-003"禁止以空断言凑数"；该条的测试数量/覆盖率部分需 CI，见 ci_gate_check）。
+     （对应 R-IMP-003"禁止以空断言凑数"；该条的测试数量/覆盖率部分需 CI，见 ci_gate_check）；
+  4. flaky 信号（v14，对应 R-VER-009，**仅测试路径启用**——路径含 test/spec/e2e，
+     不区分大小写）：sleep 凑等待（time.sleep / Thread.sleep / await sleep 等，
+     应改为显式条件等待）、rerun-to-green 装饰器与配置（@flaky / @pytest.mark.flaky /
+     @pytest.mark.rerun / reruns= / jest.retryTimes / .retries(n) / @Retry）——
+     它们把 agent 训练成"重跑碰运气而不是修复"（RT-16 / VP-06）。业务代码的
+     合法 sleep/退避不受影响（非测试路径不扫本组模式）。
 
 判据配置（GOVERNANCE_DIR/redlines.yaml，可选；存在但非法 → 42）：
   - static_risk_allowlist：正则字符串列表，命中的行视为项目显式豁免（应经人审，E-06）；
@@ -97,9 +104,22 @@ EMPTY_ASSERT = [
     (r"\bassertTrue\s*\(\s*true\s*\)", "java assertTrue(true)"),
     (r"\bexpect\s*\(\s*true\s*\)\s*\.\s*toBe\s*\(\s*true\s*\)", "js expect(true).toBe(true)"),
 ]
+# R-VER-009（v14 新增）：flaky 信号——sleep 凑等待与 rerun-to-green 装饰器
+# 会把 agent 训练成"重跑碰运气而不是修复"（RT-16 / VP-06）。**仅测试路径启用**
+# （sleep 在业务代码是合法限流/退避）；测试路径特征为通用候选（test/spec/e2e，
+# 不区分大小写），自研框架的自定义重跑 DSL 用 static_risk_extra_rules 补。
+FLAKY_SIGNALS = [
+    (r"\bsleep\s*\(", "sleep-based wait in tests (flaky root; use explicit condition waits)"),
+    (r"@flaky\b|@pytest\.mark\.(flaky|rerun)\b|\breruns\s*=",
+     "rerun-to-green decorator (flaky / pytest-rerunfailures)"),
+    (r"jest\.retryTimes\s*\(|\.retries\s*\(\s*[1-9]", "js retry-to-green config (jest/playwright/cypress)"),
+    (r"@(Retry|Retrying)\b", "java retry annotation in tests"),
+]
+TEST_PATH_RE = re.compile(r"(test|spec|e2e)", re.IGNORECASE)
 ALL_PATTERNS = [("skip", p, why) for p, why in SKIP_MARKS] + \
                [("empty-catch", p, why) for p, why in EMPTY_CATCH] + \
-               [("empty-assert", p, why) for p, why in EMPTY_ASSERT]
+               [("empty-assert", p, why) for p, why in EMPTY_ASSERT] + \
+               [("flaky", p, why) for p, why in FLAKY_SIGNALS]
 COMPILED = [(kind, re.compile(p, re.IGNORECASE), why) for kind, p, why in ALL_PATTERNS]
 
 _last = []  # 供 harness 复用：最近一次运行的发现
@@ -279,6 +299,8 @@ def scan(changes, diff_text, allowlist=(), extra=()):
             if any(rx.search(ln) for rx in allowlist):
                 continue
             for kind, rx, why in COMPILED:
+                if kind == "flaky" and not TEST_PATH_RE.search(p):
+                    continue  # flaky 模式仅测试路径（R-VER-009）；业务代码 sleep 合法
                 m = rx.search(ln)
                 if m:
                     findings.append((kind, why, p, i, ln.strip()))
@@ -640,7 +662,34 @@ def self_test():
             "expected broad-allowlist WARNING on stderr: %r" % err32.getvalue()
         os.environ.pop("GOVERNANCE_DIR", None)
 
-        print("SELF-TEST: static_risk_check.py PASS (34 scenarios + 4 sub-asserts).")
+        # ---- v14：flaky 信号（R-VER-009，仅测试路径）----
+        # 场景33：测试里的 sleep 凑等待 -> 违规
+        rc33 = run(chg("c33.json", [{"path": "tests/test_wait.py", "status": "M"}]),
+                   wr("d33.txt", hdr("tests/test_wait.py") +
+                      "+import time\n+def test_x():\n+    time.sleep(2)\n"))
+        assert rc33 == VIOLATION, "expected VIOLATION (sleep in test), got %d" % rc33
+
+        # 场景34：rerun-to-green 装饰器/配置 -> 违规（三种语言形态）
+        for fp, line in (("tests/test_rerun.py", "+@pytest.mark.flaky(reruns=3)\n"),
+                         ("e2e/flow.spec.ts", "+jest.retryTimes(3);\n"),
+                         ("src/test/RetryTest.java", "+@Retry(retryCount = 3)\n")):
+            d34 = wr("d34.txt", hdr(fp) + line)
+            rc34 = run(chg("c34.json", [{"path": fp, "status": "M"}]), d34)
+            assert rc34 == VIOLATION, \
+                "expected VIOLATION (rerun-to-green in %s), got %d" % (fp, rc34)
+
+        # 场景35：业务代码里的 sleep（限流/退避合法）-> 不误报
+        rc35 = run(chg("c35.json", [{"path": "src/rate_limit.py", "status": "M"}]),
+                   wr("d35.txt", hdr("src/rate_limit.py") + "+time.sleep(backoff)\n"))
+        assert rc35 == OK, "expected PASS (sleep in business code), got %d" % rc35
+
+        # 场景36：测试里的显式条件等待（无 sleep/rerun）-> 不误报
+        rc36 = run(chg("c36.json", [{"path": "tests/test_wait.py", "status": "M"}]),
+                   wr("d36.txt", hdr("tests/test_wait.py") +
+                      "+def test_x():\n+    page.wait_for_selector('#ready')\n"))
+        assert rc36 == OK, "expected PASS (explicit condition wait), got %d" % rc36
+
+        print("SELF-TEST: static_risk_check.py PASS (36 scenarios + 7 sub-asserts).")
         return OK
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

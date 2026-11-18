@@ -1,9 +1,9 @@
 ---
 name: harness-workflow
-description: "触发词：审计产物、审查、检查对否、artifact 校验、契约核查、证据核对、缺口清单、对抗推演、防 AI 虚报。| Audits work products against the goal contract and rule registry; emits an evidence-backed report with gaps, fix suggestions (each carrying an adversarial replay and credibility grade), and archive guidance. | 对产物对照契约与判据出具带证据的审计报告；修改建议逐条附对抗推演与可信度分级；支持有仓库与聊天两种模式。"
+description: "触发词：审计产物、审查、检查对否、artifact 校验、契约核查、证据核对、缺口清单、对抗推演、防 AI 虚报、验证体系缺什么、给项目加验证环节、AI 写代码怎么验证。| Audits work products against the goal contract and rule registry; emits an evidence-backed report with gaps, fix suggestions (each carrying an adversarial replay and credibility grade), and archive guidance. Also surveys a project's agent-verification programme (E2E/property/differential, verification stamps, flaky governance) and suggests what to build. | 对产物对照契约与判据出具带证据的审计报告；修改建议逐条附对抗推演与可信度分级；支持有仓库与聊天两种模式；可探测项目验证体系缺口并给出建设建议（只报不改）。"
 metadata:
   agent_created: true
-  version: "13"
+  version: "23"
 ---
 
 # harness-workflow（审计 skill：产物 × 契约 × 判据 → 带证据的审计报告）
@@ -63,6 +63,7 @@ harness 从不编辑被审产物，也从不编辑其它 skill 的内部流程�
 | --- | --- |
 | 要求审计某个产物 / 项目 / diff / 契约 / 证据包是否对得上 | 启用 |
 | 用户提到「审计 / 审查 / 检查对否 / 契约核查 / 证据核对」 | 启用 |
+| 问「这个项目的验证体系缺什么 / 给项目加哪些验证环节 / AI 写代码怎么验证」 | 启用：先 `--survey` 探测 + 按 `verification-program.md` 出建设建议（不合规判定、不实施） |
 | 实现者自称"完成 / 通过"，需要独立核实 | 启用 |
 | 任务涉及不可逆动作（删除、数据迁移、权限、支付、认证） | 启用，且风险等级至少"高" |
 | 纯一次性小脚本、低风险且不影响他人 | 可不启用，但仍按"附证据不附结论"自查 |
@@ -78,6 +79,25 @@ harness 从不编辑被审产物，也从不编辑其它 skill 的内部流程�
    圈定本项目生效的规则）。
 2. **定风险**：用 `audit/scripts/risk_floor_check.py` 从 diff 推算风险下限；
    高于契约声明等级 → 触发 E-17，按更高等级审。
+2a. **体系探测（建设期问题才走）**：问"项目验证体系缺什么"时，先跑
+   `verification_gate_check.py --survey <repo>` 拿只读 JSON 证据，对照
+   `references/verification-program.md` §2 诊断维度与 §4 资产规格，
+   按 P0/P1/P2 出**修改建议**（明示"非合规判定"，harness 不实施落地）。
+   建议产出后**必须**按该文件 §6 的覆盖表逐条核对 §4.1~4.10 与 VP-01~07：
+   每条标注"已建议 / 当前不适用（附理由）/ 待建设（阶段）"，不允许沉默
+   缺项——蓝图只被部分引用时，审计会退化成抽查，漏掉的恰是 agent
+   最可能出事的维度（如差分测试、元验证）。覆盖表写好、报告落盘前**只跑一条
+   单一入口**：`audit/scripts/report_gate.sh --report <报告.md>`——它一次跑完
+   两道机检（coverage_table_check 管覆盖表写作纪律：禁"已在正文带出"自证断言、
+   §4.3/§4.4/§4.7/§4.10 并列子项拆行、处置三选一；stage_consistency_check 管
+   阶段标注与证据来源：建议标题阶段 vs §3 权威表含【缺口】行所有 D、摘要阶段
+   判定 vs D 表、D11/D8 证据来源），两道都跑完再聚合退出码（0/1/42）。实测
+   某报告两道机检只跑了前者就 PASS，却一边说"P0 基本成型"一边把 D7/D10 判
+   ❌、把 D4 标 P0、D10 塞进 P2 建议，还用只扫过 skip 的粗扫给 D11 背书；
+   更隐蔽的一次是机检 PASS 但建议夹带了跨阶段维度（P1 建议【缺口】写 D8/D7，
+   D8=P1 匹配标题就放行，漏掉 P0 的 D7）。用单一入口而非列两条命令，是为了
+   不靠人记得"跑完第一道还要跑第二道"。覆盖表是报告自查的事实源，事实源
+   自身须被校验，否则下游对照会忠实放大它的错（review-the-reviewers 的本地实例）。
 3. **跑检查**：能机器化的走检查器（见下表）；不能机器化的按判据人工核对，
    并在报告中注明"人工核对"。
 4. **出报告**：通过 → 结论 + 证据；有缺口 → 按模板逐条给「修改建议」。
@@ -90,7 +110,7 @@ harness 从不编辑被审产物，也从不编辑其它 skill 的内部流程�
 
 ## 检查器（audit/scripts/）
 
-> 覆盖范围（如实声明）：登记表 **25 条**规则中 **20 条**有本包判据脚本（下表），
+> 覆盖范围（如实声明）：登记表 **27 条**规则中 **22 条**有本包判据脚本（下表），
 > 其余 5 条为 AI 行为规范类软规则（判定方式为 AI 复核 / 人判断，人工核对）。
 > 治理建设要求 14 条（合入账号/预授权/凭据隔离/状态机拦截等）自 v10 起不在
 > 登记表，作为设计要点归入 `references/attack-cases.md`「治理机制设计要点」，
@@ -107,10 +127,14 @@ harness 从不编辑被审产物，也从不编辑其它 skill 的内部流程�
 | `evidence_pack_check.py` | 证据包完整性绑定 | R-REL-002 | 内置；0/1 |
 | `trace_check.py` | 追溯矩阵断链 | R-DES-001、R-VER-005 | 内置；0/1 |
 | `tdd_order_check.py` | 红绿顺序（测试先失败） | R-IMP-002 | 需 CI 日志；无→42 |
-| `static_risk_check.py` | 新增行跳过标记/空catch/空断言 | R-IMP-004、R-IMP-003 | 内置模式无需配置；0/1/42 |
+| `static_risk_check.py` | 新增行跳过标记/空catch/空断言/测试路径 flaky 信号 | R-IMP-004、R-IMP-003、R-VER-009 | 内置模式无需配置；0/1/42 |
 | `ci_gate_check.py` | CI 门禁 step/阈值/commit绑定 | R-VER-006/007、R-VER-001/002 | 需 CI 接线；无→42 |
+| `verification_gate_check.py` | 验证戳覆盖率 + `--survey` 验证体系实装探测 | R-VER-008（survey 为建议层证据） | 需 `thresholds.verification_stamp` + `--repo`；无→42（survey 恒 0） |
 | `rule_map_check.py` | 规则映射台账一致性 | R-PRC-006 | 需 `rule-map.yaml`；无→42 |
 | `doc_consistency_check.py` | 文档死链/冲突/孤儿 | R-PRC-007 | 内置判据无需配置；0/1 |
+| `report_gate.sh` | **报告落盘单一入口**：一次跑完下列两道并聚合退出码（0/1/42），两道都跑完再判——避免漏跑第二道 | 审计循环 2a | 需 `--report <报告.md>` 或 `--self-test`；42 优先于 1 |
+| `coverage_table_check.py` | 建设期报告 §6 覆盖表写作纪律（禁自证断言/并列子项拆行/处置三选一） | 蓝图 §6 元验证（非登记表规则） | 通常经 report_gate.sh 调用；单独跑需 `--report <报告.md>`；无覆盖表→42 |
+| `stage_consistency_check.py` | 建设期报告阶段标注与证据来源一致性（建议阶段 vs §3 权威表含【缺口】行所有 D、摘要 vs D 表、D11/D8 证据来源） | 蓝图 §3/§6 元验证（非登记表规则） | 通常经 report_gate.sh 调用；单独跑需 `--report <报告.md>`；无 D 表/建议→42 |
 | `lint` | 代码风格 | R-IMP-005 | 需 `governance/lint.env`；未接线→42 |
 | `examples/test-upload`/`bench-play` | 度量范例（演示，非检查器） | R-GOAL 度量约定 | — |
 
@@ -224,14 +248,15 @@ harness 从不编辑被审产物，也从不编辑其它 skill 的内部流程�
 | 模板 | 文件 | 用途 |
 | --- | --- | --- |
 | 目标契约 | `references/goal-contract.md` | 被审产物的"应然"定义（人写定，AI 只提议） |
-| 规则登记表 | `references/rule-registry.md` | 审计判据（25 条登记规则 + 采纳边界：审什么、怎么判；治理建设要求见 attack-cases.md 设计要点） |
+| 规则登记表 | `references/rule-registry.md` | 审计判据（27 条登记规则 + 采纳边界：审什么、怎么判；治理建设要求见 attack-cases.md 设计要点） |
 | 升级触发清单 | `references/escalation.md` | 什么情况必须停下找人 + 升级格式 |
 | 执行者自检清单 | `references/executor-checklist.md` | 实现者随契约加载（非验证者职责） |
 | 聊天模式清单 | `references/chat-mode-checklist.md` | 无仓库 / 无 CI 时的核对顺序、天花板声明与报告交付 |
 | 数据格式 | `references/schemas.md` | 契约 / 追溯矩阵 / 证据包 / 交接 / 提案 / 探针结论（消费侧） |
 | 框架篇 | `references/framework.md` | 四方分工的理论底座 |
-| 机器判据 starter | `audit/templates/redlines.starter.yaml` | 首次审计无配置时复制到被审项目 `governance/` 起步 |
-| 对抗推演案例库 | `references/attack-cases.md` | 修改建议的对抗推演素材库（RT-01~15 + 六项防自欺不变量 + 治理机制设计要点〔自登记表迁入〕；单一事实源） |
+| 验证体系蓝图 | `references/verification-program.md` | 建设期诊断维度、三种测试投资与三警告、P0/P1/P2 建设顺序（含阶段归属权威表）、落地资产规格（verify manifest / 验证戳 / REVIEW 判卷规则含单一 reviewer 多轮 / 属性测试骨架 / off→observe→enforce 三档含拦截谓词 / flaky 治理 / 漏检转规则双法 / 元验证含持续度量 / 差分测试 / 前端视觉验证与异常流程规格 §4.10）、§6 报告覆盖要求 |
+| 机器判据 starter | `audit/templates/redlines.starter.yaml` | 首次审计无配置时复制到被审项目 `governance/` 起步（含验证戳阈值示例） |
+| 对抗推演案例库 | `references/attack-cases.md` | 修改建议的对抗推演素材库（RT-01~17 + 六项防自欺不变量 + 治理机制设计要点〔自登记表迁入〕+ 验证体系设计要点 VP-01~07；单一事实源） |
 | 建议示例 | `references/artifact-review-examples.md` | 「修改建议」的体裁示范 |
 
 ## 何时读哪个参考文件
@@ -240,6 +265,7 @@ harness 从不编辑被审产物，也从不编辑其它 skill 的内部流程�
 - 起一页契约 → `references/goal-contract.md`
 - 审什么、怎么判、采纳边界 → `references/rule-registry.md`
 - 该不该停、怎么升级 → `references/escalation.md`
+- 项目验证体系缺什么、怎么补（建设期） → `references/verification-program.md`（诊断维度 / 三种测试 / P0-P1-P2 / 资产规格；**§6 覆盖表是建设期报告的必备核对项**，含差分测试规格 §4.9 与前端视觉 / 异常流程规格 §4.10）
 - 数据格式（manifest / 矩阵 / 交接 / 提案）→ `references/schemas.md`
 - 「修改建议」怎么写 → `references/artifact-review-examples.md`
 - 建议的对抗推演与可信度分级 → `references/attack-cases.md`

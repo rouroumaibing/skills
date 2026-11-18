@@ -75,9 +75,9 @@
 
 ## 登记规则（按项目增删）
 
-> **判据脚本覆盖（如实声明）**：登记表 **25 条**规则中 **20 条**有本包
-> `audit/scripts/` 判据脚本（其中 lint / tdd_order_check 需 CI 接线，未接线
-> 退出 42），其余 **5 条**为 AI 行为规范类软规则，判定方式为 AI 复核 / 人判断，
+> **判据脚本覆盖（如实声明）**：登记表 **27 条**规则中 **22 条**有本包
+> `audit/scripts/` 判据脚本（其中 lint / tdd_order_check / verification_gate_check
+> 需 CI 接线或项目阈值配置，未接线退出 42），其余 **5 条**为 AI 行为规范类软规则，判定方式为 AI 复核 / 人判断，
 > 由人工核对。本列与 `SKILL.md` 检查器表互为镜像（表按"检查器 → 规则"、
 > 本表按"规则 → 脚本"），改动须同步两处。
 >
@@ -126,6 +126,14 @@
 | R-VER-005 | 追溯矩阵中不存在无来源的代码变更和无实现的需求 | 脚本比对 | 固定工程 | 硬 | 服务端 | `trace_check.py` |
 | R-VER-006 | 类型检查（`type-check`）作为合入必需 CI 门禁通过 | 命令退出码 | 固定工程 | 硬 | 服务端 | `ci_gate_check.py`（需 CI 门禁报告，未接线退出 42） |
 | R-VER-007 | 依赖扫描与密钥扫描（`dep-secret-scan`）作为合入必需 CI 门禁通过，无高危依赖/泄露密钥 | 命令退出码 | 固定工程 | 硬 | 服务端 | `ci_gate_check.py`（需 CI 门禁报告，未接线退出 42） |
+| R-VER-008 | 最近 N 个 commit 的有效验证戳覆盖率不低于 `thresholds.verification_stamp` 下限（`Verified:` trailer 取值限 e2e/unit/property/differential/manual/none，`none` 合法、"没盖戳"违规） | 命令退出码 | 固定工程 | 硬 | 服务端 | `verification_gate_check.py`（需 `thresholds.verification_stamp` 配置与 `--repo`，缺→42） |
+| R-VER-009 | diff 新增行中不出现 flaky 信号（仅测试路径：sleep 凑等待、rerun-to-green 装饰器/配置；业务代码合法 sleep 不在此列） | 脚本比对（静态扫描） | 固定工程 | 硬 | 服务端 | `static_risk_check.py`（第 4 类内置模式，无需配置；RT-16 / VP-06） |
+
+> **验证体系建设期判据从哪来**：E2E / 属性 / 差分测试怎么配、verify 资产规格、
+> 验证戳协议、off→observe→enforce 三档、漏检转规则、flaky 治理与元验证属**建设知识**，
+> 见 `references/verification-program.md` 与 `references/attack-cases.md`
+> 「验证体系设计要点 VP-01~07」——只以修改建议出现，不构成缺口。
+> 本表的 R-VER-008/009 是其中**可从产物机检**的两条，采纳后才计合规结论。
 
 ### 放行
 

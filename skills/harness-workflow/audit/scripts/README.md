@@ -137,7 +137,12 @@
 2. 吞异常的空捕获：`except ...: pass / ...`（单行 + 相邻两行形态——black/ruff
    格式化会把单行拆成两行，v12 起两行形态可检出）、`contextlib.suppress(...)`、
    `catch (...) {}` 等；
-3. 空断言凑数：`assert True` / `assertTrue(true)` / `expect(true).toBe(true)` 等。
+3. 空断言凑数：`assert True` / `assertTrue(true)` / `expect(true).toBe(true)` 等；
+4. flaky 信号（v14，R-VER-009，**仅测试路径**——路径含 test/spec/e2e，不区分大小写）：
+   `sleep(` 凑等待、`@flaky` / `@pytest.mark.flaky` / `reruns=` /
+   `jest.retryTimes` / `.retries(n)` / `@Retry` 等重跑配置。业务代码的合法
+   sleep（限流/退避）不受影响。命中意味着 agent 被训练成"重跑碰运气而不是
+   修复"（RT-16 / VP-06）。
 
 接线：**内置模式无需配置**。`redlines.yaml` 可选：
 - `static_risk_allowlist`：正则列表，命中视为项目显式豁免（应经人审，E-06）；
@@ -271,3 +276,115 @@ diff 解析（fail-closed，v10 加固）：
   无证据 → 42 fail-closed；
 - `check_contract.py --check-words` 是**软审辅助**（禁用词人核兜底），零规则 →
   警告 + 降级为人工核对，报告如实标注。
+
+---
+
+## 17. verification_gate_check.py —— R-VER-008 + 验证体系 --survey 探测
+
+**默认模式（R-VER-008）**：审最近 N 个 commit 的**验证戳覆盖率**——
+`Verified: e2e|unit|property|differential|manual|none`（大小写不敏感，可选
+`Evidence:` 路径）。`none` 是合法取值（未验证可查询是特性），白名单之外的
+method 视为无效戳（按未盖戳计）。覆盖率低于
+`thresholds.verification_stamp.min_ratio` → 1。
+
+接线：`--repo <git 仓库路径>` + `GOVERNANCE_DIR/redlines.yaml` 的
+`thresholds.verification_stamp`（`lookback>=1` 默认 50；`min_ratio` 0~1）。
+缺该配置段 / 非 git 仓库 / 无 commit → 42（fail-closed）。退出码 0 / 1 / 42。
+
+**`--survey <repo>` 模式（证据层探测，恒 0；路径不存在 → 42）**：只读输出
+JSON，不给出合规判定，供报告层映射建议：
+- `verify_asset`：`verify/` 目录、`verify.yaml/.yml/.md`、agent 技能目录下
+  `verify*`、脚本 `scripts/verify*` 候选链；
+- `ci_config`：常见 CI 配置路径 + test/build/lint step 关键词命中；
+- `test_types`：依赖清单特征（package.json / pyproject.toml / go.mod /
+  Cargo.toml / requirements*.txt / pom.xml 等）与 e2e / property /
+  differential 目录特征；
+- `verification_stamp`：最近 N 条 commit 的戳覆盖率采样。
+
+候选链 miss **不构成违规**——报告按建议模式引用
+`references/verification-program.md` §4 的资产规格给「修改建议」。
+
+已知盲区（报告须注明"survey 为形态探测，正确性需人核"）：
+verify 资产存在 ≠ 内容达标（三字段齐全性由人核）；monorepo / 非常规布局
+可能 miss；CI step 关键词命中 ≠ 门真接线（以 probe / required check 为准）。
+
+## 18. coverage_table_check.py —— 报告 §6 覆盖表写作纪律（元验证）
+
+审什么：建设期审计报告「蓝图覆盖表」的写作纪律——覆盖表是报告自查的
+事实源，它自己错了，下游对照会忠实放大（实测：hub 与 console 两份报告的
+§4.4 行都写"四模式已在建议正文带出"，但正文都缺"等价"，且同行又挂
+"详见蓝图（正文要点化）"免责——两个互斥断言并存）。
+
+三条判据（均为文本形态判定，不做语义理解）：
+
+1. **禁不可核的自证断言**：去向栏出现"已在建议正文带出 / 逐条列明 / 列明"
+   即违规。合法去向 = 建议编号与/或"详见蓝图 §4.x（正文要点化）"——
+   编号指"建议在哪"、详见指"细节去哪看"，两者并存合法；禁止的是
+   "声称全带出"又"要点化压缩"并存。
+2. **并列子项必须拆行**：§4.3（5 行）/ §4.4（5 行：四模式 + spec 漂移）/
+   §4.7（2 行）/ §4.10（4 行）须逐项独立成行；整行压缩会吞掉末尾子项
+   （"四模式择适"吞掉"等价/幂等"就是这么发生的）。
+3. **处置三选一**：处置栏以 `已建议` / `当前不适用` / `待建设` / `已覆盖`
+   开头（Markdown 加粗归一化）；"当前不适用"须有理由（处置栏或去向栏
+   任一处）、"待建设"须带 P0/P1/P2。
+
+用法：`python3 coverage_table_check.py --report <审计报告.md>`
+
+退出码：`0` PASS；`1` VIOLATION（打印 `COVERAGE-ISSUE <判据>` 每行）；
+`42` 未找到覆盖表 / 缺 `--report` 参数（fail-closed——建设期报告必须有
+§6 覆盖表，不能因为没有就当通过）。`--self-test` 5 场景自包含，含
+hub/console 真实缺陷夹具与"编号+详见合法并存"的反向夹具（防判据过严误报）。
+
+接线位置：审计循环 2a——建议产出后、报告落盘前跑；对应蓝图 `§6` 写作
+纪律（该节同时记录本检查器为何存在）。本检查器**不**核对"正文真有
+'等价'二字"——那需要另一个带 bias 的判断者；把"声称已带出"这种不可核
+断言整体禁掉，比事后验证它更可靠。
+
+## 19. stage_consistency_check.py —— 报告阶段标注与证据来源一致性（元验证）
+
+审什么：覆盖表机检 PASS **不等于**阶段说法可信（实测：某报告覆盖表机检
+PASS，却一边说"P0 基本成型"一边把 D7/D10 判 ❌；给 D4 verify 资产挂 P0、
+把 P0 的 D10 塞进 P2 建议；D11 写"无 sleep/rerun"却引用只扫过 skip 的
+粗扫）。三条文本形态判据：
+
+1. **建议标题阶段 vs【缺口】行所有 D 维度权威阶段**：标题 `### 建议 N（PX）`
+   取阶段，该建议【缺口】行**所有** D 编号（D4b 归一 D4）逐一查蓝图 §3 权威表
+   （P0=D1/D7/D10；P1=D4/D8/D9；P2=D3/D5/D11/D12/元验证），任一维度阶段与
+   标题不一致即报——实测盲区：旧版只取第一个 D，建议【缺口】写 D8/D7 时
+   D8=P1 匹配标题就放行，漏掉夹带的 P0 的 D7。除非正文显式写"主阶段=PX，
+   附带 Y 属 PZ"且声明行覆盖相关 D 的全部权威阶段——即把跨阶段说清楚，
+   不是悄悄埋进去。
+2. **摘要阶段判定 vs D 表**：摘要出现"PX 成型/达标/就绪/完成"，而该阶段
+   任一 D 维度为 ❌ → 报；⛔ 当前不适用不拖累阶段，⚠️ 部分保守视为未达标。
+3. **证据来源与判定信号同检查器**：D11 结论含 flaky 关键词却全文无
+   `static_risk_check` → 报；D8 含验证戳关键词却无 `verification_gate_check`
+   → 报。防"拿相邻扫描的 0 命中冒名顶替"。
+
+用法：`python3 stage_consistency_check.py --report <审计报告.md>`
+
+退出码：`0` PASS；`1` VIOLATION（打印 `STAGE-ISSUE <判据>` 每行）；
+`42` 缺 `--report` / 报告无 D 表 / 无建议标题（fail-closed）。`--self-test`
+9 场景自包含（含合法跨阶段声明与 hidden-cross-stage 夹带的反向夹具，防判据
+过严误报与漏报）。
+
+盲区：只核【缺口】行的 D 维度，把跨阶段维度写在正文别处则看不到；跨阶段
+声明的语义正确性仍须人核。本器只保证"说法自洽"，不保证"建议真的落地"。
+接线位置：经 `report_gate.sh` 与 `coverage_table_check.py` 一同在审计循环 2a
+跑（单一入口），两道都 PASS 才落盘。
+
+## 20. report_gate.sh —— 报告落盘单一入口（元验证的防漏跑壳）
+
+为什么存在：两道机检器（§18 coverage_table_check、§19 stage_consistency_check）
+分开跑时靠人记得"跑完第一道还要跑第二道"，实测存在漏跑风险（某报告只跑了
+前者就 PASS，第二阶段错配全部漏掉）。本脚本把两道收进**一条命令**，SKILL.md
+审计循环 2a 只指向本入口。它只做调度与退出码聚合，判定逻辑仍归各机检器
+单一所有（薄 wrapper，不复制逻辑）。
+
+用法：
+```
+audit/scripts/report_gate.sh --report <审计报告.md>   # 依次跑两道机检
+audit/scripts/report_gate.sh --self-test              # 依次跑两道机检自测
+```
+聚合：两道都跑完再判总码（第一道 FAIL 也跑第二道，避免二次往返）。`0` 两道
+都 PASS；`1` 任一抓到 finding；`42` 任一未接线（无报告/无覆盖表/无 D 表），
+且 **42 优先于 1**（没接线比接了线有违规更根本）。
