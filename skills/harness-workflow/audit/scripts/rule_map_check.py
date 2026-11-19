@@ -6,7 +6,7 @@
 校验项（每项独立报错，全部通过才 PASS）：
   1. 文件存在且为 YAML mapping（缺失/损坏 → 42 fail-closed）；
   2. `required_rules` 为非空列表，每条为 mapping；
-  3. 规则 ID 存在于本包登记表（内置 25 条 ID 清单；治理建设要求 14 条已迁
+  3. 规则 ID 存在于本包登记表（内置 27 条 ID 清单；治理建设要求 14 条已迁
      attack-cases.md「治理机制设计要点」，不是登记表规则，不可采纳 → 违反）；
   4. ID 无重复定义；
   5. 机制字段 `mechanism` ∈ {script, ci, manual}；script 机制必须有非空 `script`
@@ -79,7 +79,7 @@ RULES = {
     "R-IMP-001": "硬", "R-IMP-002": "硬", "R-IMP-003": "硬", "R-IMP-004": "硬",
     "R-IMP-005": "硬",
     "R-VER-001": "硬", "R-VER-002": "硬", "R-VER-005": "硬", "R-VER-006": "硬",
-    "R-VER-007": "硬",
+    "R-VER-007": "硬", "R-VER-008": "硬", "R-VER-009": "硬",
     "R-REL-002": "硬", "R-REL-003": "硬",
     "R-SEC-003": "硬", "R-SEC-004": "硬",
     "R-PRC-003": "软", "R-PRC-006": "硬", "R-PRC-007": "硬",
@@ -186,7 +186,7 @@ def main(argv):
         return NOT_WIRED
     if not os.path.exists(map_path):
         print("rule_map_check: rule-map.yaml not found: %s — rule mapping NOT built; "
-              "treat as NOT-WIRED (fail-closed). Bootstrap: list which of the 25 "
+              "treat as NOT-WIRED (fail-closed). Bootstrap: list which of the 27 "
               "registry rules are merge-required and how each is enforced "
               "(script / ci / manual)." % map_path, file=sys.stderr)
         return NOT_WIRED
@@ -540,7 +540,7 @@ def self_test():
         assert rc18 == VIOLATION, \
             "expected VIOLATION (map without adoption declaration), got %d" % rc18
 
-        print("SELF-TEST: rule_map_check.py PASS (24 scenarios + registry drift check).")
+        print("SELF-TEST: rule_map_check.py PASS (26 scenarios + registry drift check).")
         return OK
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

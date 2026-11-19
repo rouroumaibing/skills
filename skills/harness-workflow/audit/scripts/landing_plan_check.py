@@ -17,6 +17,11 @@ review-the-reviewers 的本地实例——计划是报告的下游，若它沉�
 5. **需拍板项带推荐值**：需拍板表每行的"推荐值"与"默认动作"列非空。
 6. **无版本叙述 / 自证断言**：正文不出现 v1/v2/版本沿革/完整重建/新增子机制
    等变更叙述，也不出现"已在正文带出/逐条列明"这类不可核自证。
+7. **承重墙批次含真跑证据**：目标或批次名涉及 verify / 验证循环 / 承重墙的批次，
+   其 gate 必须同时含"驱动真实系统跑完整用户流"的信号（浏览器 / API harness /
+   端到端 / 完整用户流 / hands 驱动等）与"外部可查产物"信号（截图 / 响应 / 日志 /
+   evidence 等）。只写 `build` rc=0、"字段齐"、manifest 存在等静态声明 → VIOLATION。
+   这防止用"声明齐全"冒充"真跑通过"——声明不是运行，会让下游门拦在空转上。
 
 用法：
   python3 landing_plan_check.py --plan <落地计划.md> [--report <审计报告.md>]
@@ -39,6 +44,13 @@ NOT_WIRED = 42
 
 HEADERS = ("批次", "目标", "吸收建议", "前置", "验收 gate", "需拍板")
 GATE_SIGNAL = re.compile(r"`|退出码|rc\s*=|期望|输出|\.(go|md|yaml|yml|sh|mjs|json|py)\b")
+# 判据 7：承重墙批次的"真跑"与"外部证据"信号。
+LOAD_BEARING_HINT = re.compile(r"verify|验证循环|承重墙|真跑|端到端", re.I)
+REAL_RUN_SIGNAL = re.compile(
+    r"浏览器|API\s*harness|e2e|端到端|完整用户流|真实用户流|真跑|真实系统|"
+    r"真实运行|hands|驱动.*(URL|页面|接口|API)|playwright|curl.*(API|接口|/api)", re.I)
+EXTERNAL_EVIDENCE_SIGNAL = re.compile(
+    r"截图|响应体|响应|日志|evidence|\.png|\.json|带时间戳|sha256|外部可查", re.I)
 VERSION_NARRATIVE = re.compile(
     r"v1 报告|本 v2|v2 为|版本沿革|完整重建|增量补丁|新增子机制|新增方法|改为原来的")
 SELF_CLAIM = re.compile(r"已在.{0,8}正文.{0,4}(带出|列明)|逐条列明")
@@ -110,6 +122,7 @@ def check_text(text, report_text=None):
     i_abs = _col_index(header, "吸收建议")
     i_gate = _col_index(header, "验收 gate")
     i_decide = _col_index(header, "需拍板")
+    i_goal = _col_index(header, "目标")
 
     batch_names = []
     for idx, cells in enumerate(rows, 1):
@@ -121,6 +134,14 @@ def check_text(text, report_text=None):
         decide = cells[i_decide] if i_decide is not None and i_decide < len(cells) else ""
         if decide and "见" in decide and not re.search(r"需拍板项", decide):
             findings.append("row%d-decision-unclear-link:%s" % (idx, decide[:24]))
+
+        # 判据 7：承重墙批次必须含真跑 + 外部证据，防"声明齐"冒充"真跑过"。
+        goal = cells[i_goal] if i_goal is not None and i_goal < len(cells) else ""
+        if LOAD_BEARING_HINT.search(name) or LOAD_BEARING_HINT.search(goal):
+            if not REAL_RUN_SIGNAL.search(gate):
+                findings.append("row%d-load-bearing-no-real-run:%s" % (idx, gate[:24]))
+            if not EXTERNAL_EVIDENCE_SIGNAL.search(gate):
+                findings.append("row%d-load-bearing-no-external-evidence:%s" % (idx, gate[:24]))
 
     # 判据 4：明细与总览一一对应
     detail_heads = set(re.findall(r"^###\s+(第[一二三四五六七八九十\d]+批[：:].+)$",
@@ -211,10 +232,10 @@ def self_test():
             "| --- | --- | --- | --- | --- | --- |\n")
     good_table = "\n".join([
         "| 第一批：修注释与接门 | 让 CI 说真话 | 建议 1/10 | 无 | `pnpm lint` rc=0，输出干净 | 无 |",
-        "| 第二批：verify 模板 | 定义 done | 建议 4/5 | 第一批 | `verify done` 落退出码到 `evidence/` | 见需拍板项① |",
+        "| 第二批：verify 模板 | 定义 done 并真跑一次完整用户流 | 建议 4/5 | 第一批 | hands 用浏览器驱动真实页面跑通完整用户流，落截图与响应到 `evidence/`，rc=0 | 见需拍板项① |",
     ])
     detail = ("\n## 各批次明细\n\n### 第一批：修注释与接门\n\n- **验收 gate**：`pnpm lint` rc=0\n\n"
-              "### 第二批：verify 模板\n\n- **验收 gate**：`verify done` 落退出码\n\n")
+              "### 第二批：verify 模板\n\n- **验收 gate**：浏览器驱动跑通完整用户流落 `evidence/` 截图\n\n")
     decision = ("\n## 需拍板项（单列）\n\n"
                 "| 编号 | 决策点 | 推荐值 | 理由 | 默认动作 |\n"
                 "| --- | --- | --- | --- | --- |\n"
@@ -260,7 +281,23 @@ def self_test():
     assert not any("suggestions-not-landed" in x for x in f7), f7
     print("PASS scenario 7: slash-grouped suggestion refs not false-flagged")
 
-    print("SELF-TEST: landing_plan_check.py PASS (7 scenarios).")
+    # 场景8：承重墙批次用静态声明冒充真跑（build 绿 / 字段齐）→ 抓
+    static_claim = good.replace(
+        "hands 用浏览器驱动真实页面跑通完整用户流，落截图与响应到 `evidence/`，rc=0",
+        "`pnpm build` rc=0；verify.yaml 三字段齐")
+    f8 = check_text(static_claim)
+    assert any("row2-load-bearing-no-real-run" in x for x in f8), f8
+    assert any("row2-load-bearing-no-external-evidence" in x for x in f8), f8
+    print("PASS scenario 8: static-declaration-as-real-run caught in load-bearing batch")
+
+    # 场景9：真跑信号有但无外部证据落点 → 抓
+    no_evidence = good.replace(
+        "落截图与响应到 `evidence/`，rc=0", "页面打开成功，rc=0")
+    f9 = check_text(no_evidence)
+    assert any("row2-load-bearing-no-external-evidence" in x for x in f9), f9
+    print("PASS scenario 9: real-run-without-external-evidence caught")
+
+    print("SELF-TEST: landing_plan_check.py PASS (9 scenarios).")
     return OK
 
 

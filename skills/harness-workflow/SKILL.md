@@ -1,9 +1,9 @@
 ---
 name: harness-workflow
-description: "触发词：审计产物、审查、检查对否、artifact 校验、契约核查、证据核对、缺口清单、目标契约、规则登记表、升级触发清单、对抗推演、human-in-the-loop、先定契约再动手、防 AI 虚报、验证体系缺什么、给项目加验证环节、AI 写代码怎么验证、审计报告怎么落地、给建议排落地顺序、先做哪个。| Audits work products against the goal contract and rule registry; emits an evidence-backed report with gaps, fix suggestions (each carrying an adversarial replay and credibility grade), and archive guidance. Also surveys a project's agent-verification programme (E2E/property/differential, verification stamps, flaky governance) and suggests what to build, with a dependency-ordered landing plan that turns flat suggestions into concrete batches with acceptance gates. | 对产物对照契约与判据出具带证据的审计报告；修改建议逐条附对抗推演与可信度分级；支持有仓库与聊天两种模式；可探测项目验证体系缺口并给出建设建议（只报不改），并把建议转成按依赖排序、带验收 gate 的推荐落地计划（仍是建议，不替人实施）。"
+description: "触发词：审计产物、审查、检查对否、artifact 校验、契约核查、证据核对、缺口清单、目标契约、规则登记表、升级触发清单、对抗推演、human-in-the-loop、先定契约再动手、防 AI 虚报、验证体系缺什么、给项目加验证环节、AI 写代码怎么验证、审计报告怎么落地、给建议排落地顺序、先做哪个。| Audits work products against the goal contract and rule registry; emits an evidence-backed report with gaps, fix suggestions (each carrying an adversarial replay and credibility grade), and archive guidance. Also surveys a project's agent-verification programme (E2E/property/differential, verification stamps, flaky governance) and suggests what to build, with a dependency-ordered landing plan that turns flat suggestions into concrete batches with acceptance gates. | 对产物对照契约与判据出具带证据的审计报告；修改建议逐条附对抗推演与可信度分级；支持有仓库与聊天两种模式；可探测项目验证体系缺口并给出建设建议（只报不改），并把建议转成按依赖排序、带验收 gate 的推荐落地计划（仍是建议，不替人实施）；也回答通用 agent 怎么在提交前触发验证、/goal 等完成事件的平台无关替代。"
 metadata:
   agent_created: true
-  version: "25"
+  version: "27"
 ---
 
 # harness-workflow（审计 skill：产物 × 契约 × 判据 → 带证据的审计报告）
@@ -265,7 +265,7 @@ harness 从不编辑被审产物，也从不编辑其它 skill 的内部流程�
 | 聊天模式清单 | `references/chat-mode-checklist.md` | 无仓库 / 无 CI 时的核对顺序、天花板声明与报告交付 |
 | 数据格式 | `references/schemas.md` | 契约 / 追溯矩阵 / 证据包 / 交接 / 提案 / 探针结论（消费侧） |
 | 框架篇 | `references/framework.md` | 四方分工的理论底座 |
-| 验证体系蓝图 | `references/verification-program.md` | 建设期诊断维度、三种测试投资与三警告、P0/P1/P2 建设顺序（含阶段归属权威表）、落地资产规格（verify manifest / 验证戳 / REVIEW 判卷规则含单一 reviewer 多轮 / 属性测试骨架 / off→observe→enforce 三档含拦截谓词 / flaky 治理 / 漏检转规则双法 / 元验证含持续度量 / 差分测试 / 前端视觉验证与异常流程规格 §4.10）、§6 报告覆盖要求 |
+| 验证体系蓝图 | `references/verification-program.md` | 建设期诊断维度、三种测试投资与三警告、P0/P1/P2 建设顺序（含阶段归属权威表）、落地资产规格（verify manifest / 验证戳 / REVIEW 判卷规则含单一 reviewer 多轮 / 属性测试骨架 / off→observe→enforce 三档含拦截谓词 / flaky 治理 / 漏检转规则双法 / 元验证含持续度量 / 差分测试 / 前端视觉验证与异常流程规格 §4.10、agent 调用适配层 §4.11）、§6 报告覆盖要求 |
 | 落地计划规格 | `references/landing-plan.md` | 把审计报告的建议转成推荐落地计划：按依赖排批次、每批验收 gate、需人拍板项单列；含五层依赖顺序、批次模板、使用者导向语言纪律 |
 | 机器判据 starter | `audit/templates/redlines.starter.yaml` | 首次审计无配置时复制到被审项目 `governance/` 起步（含验证戳阈值示例） |
 | 对抗推演案例库 | `references/attack-cases.md` | 修改建议的对抗推演素材库（RT-01~17 + 六项防自欺不变量 + 治理机制设计要点〔自登记表迁入〕+ 验证体系设计要点 VP-01~07；单一事实源） |
@@ -277,7 +277,7 @@ harness 从不编辑被审产物，也从不编辑其它 skill 的内部流程�
 - 起一页契约 → `references/goal-contract.md`
 - 审什么、怎么判、采纳边界 → `references/rule-registry.md`
 - 该不该停、怎么升级 → `references/escalation.md`
-- 项目验证体系缺什么、怎么补（建设期） → `references/verification-program.md`（诊断维度 / 三种测试 / P0-P1-P2 / 资产规格；**§6 覆盖表是建设期报告的必备核对项**，含差分测试规格 §4.9 与前端视觉 / 异常流程规格 §4.10）
+- 项目验证体系缺什么、怎么补（建设期） → `references/verification-program.md`（诊断维度 / 三种测试 / P0-P1-P2 / 资产规格；**§6 覆盖表是建设期报告的必备核对项**，含差分测试规格 §4.9、前端视觉 / 异常流程规格 §4.10 与 agent 调用适配层 §4.11）
 - 报告出完怎么排落地顺序、先做哪个 → `references/landing-plan.md`（五层依赖顺序 / 批次模板 / 每批验收 gate / 需人拍板项单列；把平铺建议变成使用者可直接施工的计划）
 - 数据格式（manifest / 矩阵 / 交接 / 提案）→ `references/schemas.md`
 - 「修改建议」怎么写 → `references/artifact-review-examples.md`

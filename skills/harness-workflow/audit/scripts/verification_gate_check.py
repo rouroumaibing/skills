@@ -75,6 +75,11 @@ VERIFY_ASSET_CANDIDATES = [
 ]
 VERIFY_SCRIPT_PREFIX = ("verify",)  # scripts/verify* / .claude/skills/verify*
 AGENT_SKILL_DIRS = (".claude/skills", ".agent/skills", "skills")
+AGENT_ADAPTER_FILES = (
+    "AGENTS.md", "CLAUDE.md",                 # 平台中立 / 生态 agent 指令文件
+    ".claude/skills", ".cursor/rules", ".github/copilot-instructions.md",
+)
+GIT_HOOK_FILES = (".githooks/pre-commit", ".husky/pre-commit")
 CI_CONFIG_CANDIDATES = [
     ".github/workflows", ".gitlab-ci.yml", "Jenkinsfile",
     ".circleci/config.yml", "azure-pipelines.yml", ".drone.yml", "cloudbuild.yaml",
@@ -306,6 +311,38 @@ def _survey_test_types(root):
     }
 
 
+def _survey_agent_adapter(root):
+    """--survey：agent 调用适配层形态探测（证据层，不做合规判定）。
+
+    三件事：可调用入口（复用 verify 资产候选）、git/CI 生命周期绑定、
+    生态薄适配器候选。全部走候选链，miss 是建议素材、不构成违规。
+    """
+    entry = _survey_verify_asset(root)
+    ci = _survey_ci(root)
+    ci_calls_verify = {}
+    for c in ci["config_found"]:
+        p = os.path.join(root, c)
+        texts = []
+        if os.path.isdir(p):
+            for fn in sorted(os.listdir(p)):
+                if fn.endswith((".yml", ".yaml")):
+                    fp = os.path.join(p, fn)
+                    if os.path.isfile(fp):
+                        with open(fp, encoding="utf-8", errors="replace") as f:
+                            texts.append(f.read().lower())
+        elif os.path.isfile(p):
+            with open(p, encoding="utf-8", errors="replace") as f:
+                texts.append(f.read().lower())
+        ci_calls_verify[c] = "verify" in "\n".join(texts)
+    return {
+        "callable_entry": entry,
+        "git_lifecycle_hook": _exists_any(root, GIT_HOOK_FILES),
+        "ci_lifecycle": ci["config_found"],
+        "ci_invokes_verify": ci_calls_verify,
+        "ecosystem_adapter": _exists_any(root, AGENT_ADAPTER_FILES),
+    }
+
+
 def survey(repo):
     if not os.path.isdir(repo):
         print("NOT-WIRED: survey path is not a directory: %s" % repo,
@@ -318,6 +355,7 @@ def survey(repo):
         "verify_asset": _survey_verify_asset(repo),
         "ci": _survey_ci(repo),
         "test_types": _survey_test_types(repo),
+        "agent_adapter": _survey_agent_adapter(repo),
     }
     if result["is_git_repo"]:
         stamped, total, _, _ = stamp_coverage(repo, DEFAULT_LOOKBACK)
@@ -503,11 +541,40 @@ def self_test():
         assert "e2e" in j["test_types"]["e2e"]["dir"], j["test_types"]
         assert j["verification_stamp"]["stamped"] == 1, j["verification_stamp"]
 
+        # 场景12：--survey agent_adapter 段（git 钩子 + CI 调 verify + 生态薄适配）
+        rad = os.path.join(tmp, "r_adapter")
+        os.makedirs(os.path.join(rad, ".githooks"), exist_ok=True)
+        os.makedirs(os.path.join(rad, ".claude", "skills", "verify"), exist_ok=True)
+        os.makedirs(os.path.join(rad, ".github", "workflows"), exist_ok=True)
+        with open(os.path.join(rad, ".githooks", "pre-commit"), "w",
+                  encoding="utf-8") as f:
+            f.write("#!/bin/sh\nbash scripts/verify-gate.sh check\n")
+        with open(os.path.join(rad, "AGENTS.md"), "w", encoding="utf-8") as f:
+            f.write("# repo instructions\nrun scripts/verify then mark-verified\n")
+        with open(os.path.join(rad, ".claude", "skills", "verify", "SKILL.md"),
+                  "w", encoding="utf-8") as f:
+            f.write("---\nname: verify\n---\ncall scripts/verify\n")
+        with open(os.path.join(rad, ".github", "workflows", "ci.yml"), "w",
+                  encoding="utf-8") as f:
+            f.write("jobs:\n  verify:\n    run: bash scripts/verify.sh\n")
+        _mk_repo(rad, [("init\n\nVerified: unit", {"AGENTS.md": "x"})])
+        out12 = _io.StringIO()
+        with contextlib.redirect_stdout(out12):
+            rc12 = main(["--survey", rad])
+        assert rc12 == OK, "expected survey OK, got %d" % rc12
+        j12 = json.loads(out12.getvalue())
+        aa = j12["agent_adapter"]
+        assert aa["git_lifecycle_hook"] == [".githooks/pre-commit"], aa
+        assert "AGENTS.md" in aa["ecosystem_adapter"], aa
+        assert ".claude/skills" in aa["ecosystem_adapter"], aa
+        assert aa["ci_invokes_verify"][".github/workflows"] is True, aa
+        assert j["agent_adapter"]["git_lifecycle_hook"] == [], j["agent_adapter"]
+
         # 场景11：--survey 路径不存在 -> 42
         rc11 = main(["--survey", os.path.join(tmp, "nope")])
         assert rc11 == NOT_WIRED, "expected 42 (missing survey path), got %d" % rc11
 
-        print("SELF-TEST: verification_gate_check.py PASS (11 scenarios).")
+        print("SELF-TEST: verification_gate_check.py PASS (12 scenarios).")
         return OK
     finally:
         os.environ.pop("GOVERNANCE_DIR", None)
