@@ -31,6 +31,8 @@ r"""verification_gate_check.py —— R-VER-008 实装 + 验证体系实装探�
      Cargo.toml / requirements*.txt / pom.xml 文本扫描）+ 目录特征：
      e2e / property / differential(golden/snapshot/approval) 三类；
    - verification_stamp：最近 lookback 条 commit 的戳覆盖率采样。
+   - evidence_retention：落盘证据目录 / 忽略规则覆盖 / 凭据文件名 / 已被 git
+     跟踪的证据文件 / baseline 忽略例外（§4.12 证据留存边界）。
    候选链是**通用形态枚举**（跨生态约定，非点名特定平台）；项目自有布局不在
    候选链内时报告 miss，不构成违规——报告层按"建议模式"引用
    verification-program.md §4 的资产规格出具修改建议。
@@ -80,6 +82,12 @@ AGENT_ADAPTER_FILES = (
     ".claude/skills", ".cursor/rules", ".github/copilot-instructions.md",
 )
 GIT_HOOK_FILES = (".githooks/pre-commit", ".husky/pre-commit")
+EVIDENCE_DIR_CANDIDATES = (
+    "evidence", "artifacts", "test-results", "test_results", "reports",
+)
+CREDENTIAL_FILE_TOKENS = ("cookie", "token", "secret", "credential", "session")
+BASELINE_DIR_TOKENS = ("baseline", "golden", "approval")
+IGNORE_FILE_CANDIDATES = (".gitignore", ".git/info/exclude")
 CI_CONFIG_CANDIDATES = [
     ".github/workflows", ".gitlab-ci.yml", "Jenkinsfile",
     ".circleci/config.yml", "azure-pipelines.yml", ".drone.yml", "cloudbuild.yaml",
@@ -343,6 +351,62 @@ def _survey_agent_adapter(root):
     }
 
 
+def _survey_evidence_retention(repo):
+    """§4.12 形态探测：证据目录 / 忽略覆盖 / 凭据文件名 / 已跟踪 / baseline 例外。
+
+    只读、候选链枚举，miss 不构成违规；正确性（凭据是否源头落盘）需人核。
+    """
+    dirs = []
+    for cand in EVIDENCE_DIR_CANDIDATES:
+        p = os.path.join(repo, cand)
+        if os.path.isdir(p):
+            dirs.append(cand)
+    ignore_lines = []
+    ignore_files = []
+    for rel in IGNORE_FILE_CANDIDATES:
+        p = os.path.join(repo, rel)
+        if os.path.isfile(p):
+            ignore_files.append(rel)
+            try:
+                with open(p, encoding="utf-8", errors="replace") as f:
+                    ignore_lines += [ln.strip() for ln in f
+                                     if ln.strip() and not ln.lstrip().startswith("#")]
+            except OSError:
+                pass
+    covers = []
+    for d in dirs:
+        hit = any((d in ln and not ln.startswith("!")) or ln.rstrip("/") == d
+                  for ln in ignore_lines)
+        covers.append({"dir": d, "ignored": bool(hit)})
+    baseline_exception = any(
+        ln.startswith("!") and any(t in ln.lower() for t in BASELINE_DIR_TOKENS)
+        for ln in ignore_lines)
+    credential_files = []
+    for d in dirs:
+        root = os.path.join(repo, d)
+        for cur, _subdirs, files in os.walk(root):
+            for fn in files:
+                low = fn.lower()
+                if any(t in low for t in CREDENTIAL_FILE_TOKENS):
+                    rel = os.path.relpath(os.path.join(cur, fn), repo)
+                    credential_files.append(rel.replace(os.sep, "/"))
+    tracked = []
+    out, rc = _git(repo, "ls-files")
+    if rc == 0:
+        for line in out.splitlines():
+            norm = line.strip().replace(os.sep, "/")
+            if any(norm == d or norm.startswith(d + "/") for d in dirs):
+                tracked.append(norm)
+    return {
+        "evidence_dirs": dirs,
+        "ignore_files": ignore_files,
+        "gitignore_covers": covers,
+        "baseline_exception": baseline_exception,
+        "credential_files": credential_files,
+        "git_tracked": tracked,
+    }
+
+
 def survey(repo):
     if not os.path.isdir(repo):
         print("NOT-WIRED: survey path is not a directory: %s" % repo,
@@ -356,6 +420,7 @@ def survey(repo):
         "ci": _survey_ci(repo),
         "test_types": _survey_test_types(repo),
         "agent_adapter": _survey_agent_adapter(repo),
+        "evidence_retention": _survey_evidence_retention(repo),
     }
     if result["is_git_repo"]:
         stamped, total, _, _ = stamp_coverage(repo, DEFAULT_LOOKBACK)
@@ -570,11 +635,51 @@ def self_test():
         assert aa["ci_invokes_verify"][".github/workflows"] is True, aa
         assert j["agent_adapter"]["git_lifecycle_hook"] == [], j["agent_adapter"]
 
+
+        # 场景13：--survey evidence_retention 段（证据目录 / 忽略 / 凭据 / 已跟踪 / baseline 例外）
+        rev = os.path.join(tmp, "r_evidence")
+        _mk_repo(rev, [
+            ("init\n\nVerified: unit", {
+                ".gitignore": "evidence/\n!evidence/baseline/\n",
+                "evidence/2026-01-01T00-00-00Z/shot.png": "PNG",
+                "evidence/2026-01-01T00-00-00Z/cookies.txt": "# Netscape HTTP Cookie File\nsdp_sess\tenc:v1:abc",
+                "evidence/baseline/01-login.png": "BASELINE-PNG",
+            }),
+        ])
+        out13 = _io.StringIO()
+        with contextlib.redirect_stdout(out13):
+            rc13 = main(["--survey", rev])
+        assert rc13 == OK, "expected survey OK, got %d" % rc13
+        j13 = json.loads(out13.getvalue())
+        er = j13["evidence_retention"]
+        assert "evidence" in er["evidence_dirs"], er
+        assert ".gitignore" in er["ignore_files"], er
+        assert any(c["dir"] == "evidence" and c["ignored"] for c in er["gitignore_covers"]), er
+        assert er["baseline_exception"] is True, er
+        assert any("cookies.txt" in f for f in er["credential_files"]), er
+        # 忽略规则生效：evidence/ 被 gitignore 覆盖，git add -A 不带入 → 已跟踪为空
+        assert er["git_tracked"] == [], er
+
+        # 场景13b：无忽略规则 → 证据被 git 跟踪，信号能检出入库风险
+        rev_bad = os.path.join(tmp, "r_evidence_noignore")
+        _mk_repo(rev_bad, [
+            ("init\n\nVerified: unit", {
+                "evidence/2026-01-01T00-00-00Z/shot.png": "PNG",
+            }),
+        ])
+        out13b = _io.StringIO()
+        with contextlib.redirect_stdout(out13b):
+            rc13b = main(["--survey", rev_bad])
+        assert rc13b == OK, "expected survey OK, got %d" % rc13b
+        er_bad = json.loads(out13b.getvalue())["evidence_retention"]
+        assert all(not c["ignored"] for c in er_bad["gitignore_covers"]), er_bad
+        assert any("shot.png" in f for f in er_bad["git_tracked"]), er_bad
+
         # 场景11：--survey 路径不存在 -> 42
         rc11 = main(["--survey", os.path.join(tmp, "nope")])
         assert rc11 == NOT_WIRED, "expected 42 (missing survey path), got %d" % rc11
 
-        print("SELF-TEST: verification_gate_check.py PASS (12 scenarios).")
+        print("SELF-TEST: verification_gate_check.py PASS (13 scenarios).")
         return OK
     finally:
         os.environ.pop("GOVERNANCE_DIR", None)

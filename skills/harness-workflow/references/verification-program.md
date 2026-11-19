@@ -8,7 +8,7 @@
 > AI / 工程按建议清单进行；落地后的资产（verify manifest、CI 门、判卷规则）
 > 即成为后续审计的判据输入。
 > 知识来源：Claude Code 团队验证实践（claude.dev blog, 2026-11）+ 通用 Agent
-> 落地转译；对抗视角的设计约束见 `attack-cases.md`「验证体系设计要点 VP-01~07」。
+> 落地转译；对抗视角的设计约束见 `attack-cases.md`「验证体系设计要点 VP-01~09」。
 
 ## §0 为什么验证体系是一等审计对象
 
@@ -355,6 +355,40 @@ verify）、`ecosystem_adapter`（`AGENTS.md` / 生态 skill 目录 / 指令文�
 点明**当前仓库由哪个 agent 无关的生命周期点兜底**：只写了生态 skill 而无
 git/CI 绑定的，判"适配器已接、强制点未接"，不能算闭环。
 
+### 4.12 证据留存边界（generated evidence ≠ committed artifact）
+
+适用前提：done 判据会产出**落盘证据**（日志 / 截图 / 响应体 / cookie jar）。
+无落盘证据时按"当前不适用"标注并写明理由。
+
+"外部可查的证据"指证据生成在 agent 自述之外、可被独立核对（§0、§4.10），
+但**可查 ≠ 入库**。把运行时证据提交进代码库会同时引入两个真实损害：带真实
+会话凭据的证据文件进 git 历史（不可逆泄露，事后 `--no-verify` 也救不回），
+以及每次跑出的时间戳目录无限膨胀。留存边界按三类资产分别规定：
+
+① **运行时证据（evidence/ 的时间戳子目录：日志 / 截图 / 响应 / cookie）** —
+   默认的临时核对产物，**不提交进版本库**：仓库根的忽略规则须覆盖证据目录
+   （候选链 `.gitignore` / `.git/info/exclude` / 平台全局 ignore），使 `git add -A`
+   不会把它带进索引。需要长期留存时走 CI artifact / 对象存储并绑定 commit sha，
+   代码库里只留指向它的路径与 sha256。
+
+② **会话凭据（cookie jar / token / Authorization 值）** — 比 gitignore 更根本：
+   harness 在采集端就**不把它写进证据文件**，或写入前脱敏（清空 cookie 值、
+   剥掉 Authorization 头）。理由：忽略规则只挡上传，本地文件仍在，打包外发 /
+   `git add -f` / 换机器 copy 都会泄露；从源头不落盘才能根治。
+
+③ **判卷基线（baseline 截图 / golden 集）** — 与①相反，**应入库**且列入
+   `protected_paths`（§4.10 ①）：基线与容差是判卷标准，变更须人审，agent 不得
+   把基线改成"当前渲染"。忽略规则若用 `evidence/` 整目录通配，须给
+   `evidence/baseline/` 开白名单例外（`!evidence/baseline/`），否则基线被一起
+   忽略，判卷标准无法跨机器复现。
+
+**审计可核（survey `evidence_retention` 段）**：探测四类形态候选——
+`evidence_dirs`（落盘证据目录）、`gitignore_covers`（忽略规则是否覆盖证据目录）、
+`credential_files`（证据目录内疑似凭据文件名，如 cookies/token/secret）、
+`git_tracked`（已被 git 跟踪的证据文件）。全是形态候选链，miss 不构成违规；
+报告在 §4.12 覆盖行须逐条标注 ①②③ 的处置，并点明**凭据从源头是否落盘**
+与 **baseline 是否有忽略例外**——二者是这节最常见的假阴性。
+
 ## §5 与登记表 / 检查器的映射（单一事实源纪律）
 
 | 蓝图维度 | 机检判据 | 说明 |
@@ -367,6 +401,7 @@ git/CI 绑定的，判"适配器已接、强制点未接"，不能算闭环。
 | D4 前端视觉判据 | 人工核对 + 证据包 `screenshot` item（`schemas.md` §3，走既有 sha256 校验） | 建设规格见 §4.10；基线保护见 RT-18；无前端交互时按"当前不适用"标注 |
 | D7/D9/D12 | 人工核对 | 报告标注"人工核对"；设计约束见 attack-cases VP 节 |
 | §4.11 agent 调用适配层 | `verification_gate_check.py --survey`（`agent_adapter` 段：入口候选 / git-CI 绑定 / 生态薄适配） | 证据层 JSON，报告层映射为建议；完成事件只作可选加速器，不作判据 |
+| §4.12 证据留存边界 | `verification_gate_check.py --survey`（`evidence_retention` 段：证据目录 / 忽略覆盖 / 凭据文件名 / 已跟踪证据） | 证据层 JSON，报告层映射为建议；不入库 ≠ 不可查，凭据源头落盘与 baseline 忽略例外是假阴性高发点 |
 
 > 规则语义的人读权威在 `rule-registry.md`；机器判据阈值在
 > `governance/redlines.yaml`；本文件不复制阈值数值（引用见上表）。
@@ -403,7 +438,8 @@ git/CI 绑定的，判"适配器已接、强制点未接"，不能算闭环。
 | §4.9 差分测试（oracle/采样、归一化、允许变更白名单、收敛判据） | 同上（无旧系统时"当前不适用"并写明理由） | 建议 N / — |
 | §4.10 前端视觉验证与异常流程（**逐项标注**：①基线管理〔protected_paths / 人确认首版 / 稳定时刻 / sha256〕②比对协议〔baseline/actual sha256 + diff 指标 + 容差 + 漂移处置分岔〕③异常态驱动清单〔网络失败/空数据/超时/权限/弹窗抽屉各态 + 截图↔用例映射〕④截图一等证据 schemas `screenshot` 类型；无前端交互时"当前不适用"并写明理由） | 同上（按子项拆行；无前端须写明理由） | 建议 N / — |
 | §4.11 Agent 调用适配层（**逐条标注 ①②③**：①可调用入口〔verify.yaml + scripts/verify*，shell 可调用、不依赖生态钩子〕②会话事实〔状态文件 + git，start/mark/check，拦截谓词读它不读自述〕③触发绑定〔git pre-commit 本地反馈 + 服务端 pre-receive/CI required check 真强制；平台中立 agent 指令文件 + 生态完成事件为可选薄适配器、不复制验证逻辑、不作判据〕；并点明兜底生命周期点） | 同上 | 建议 N / — |
-| VP-01~08（对抗视角设计约束） | 已由上表对应行覆盖，或单列 | — |
+| §4.12 证据留存边界（**逐条标注 ①②③**：①运行时证据不入库〔忽略规则覆盖证据目录、`git add -A` 不带入、长期留存走外部 artifact 绑 commit〕②凭据采集端不落盘 / 脱敏〔比 ignore 更根本，ignore 只挡上传〕③判卷基线入库且列 `protected_paths`，整目录 ignore 开 `!evidence/baseline/` 例外；并点明凭据源头落盘情况与 baseline 例外） | 同上 | 建议 N / — |
+| VP-01~09（对抗视角设计约束） | 已由上表对应行覆盖，或单列 | — |
 
 写作纪律：
 
