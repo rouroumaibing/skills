@@ -27,13 +27,16 @@
 
 规则:
 - 读、写 tool 必须拆开,不得合并成一个带 `mode` 参数的 tool。
+- **读写语义写进 tool annotations**(骨架已实现): 只读 tool 标 `readOnlyHint: true`,写 tool 标 `readOnlyHint: false`(不可逆 / 无法撤销的再开 `destructiveHint: true`);语义进协议层 annotations,不进参数、不进 description。契约回归(见 §5)会把 `readOnlyHint`/`destructiveHint` 翻转判为破坏。
 - 不暴露 `execute_sql`、`run_shell` 这类万能 tool;需要时做成白名单化的具体 tool。
 - 凭证、密码、token 不得出现在任何 tool 参数中。
 
 ## 4.1 工具设计规范(Agent 调用成功率的关键)
 tool 的 description、参数名和返回值,是模型唯一能看到的"使用说明",写得好坏直接决定被调用得对不对。
 
-- **description 只写"用途 + 何时用/何时不用",不写流程**:例如"按订单号查询订单状态。查询库存请用 `get_inventory`"。流程与顺序归技能。
+- **description 只写"用途 + 何时用/何时不用",不写流程**:例如"按订单号查询订单状态。查询库存请用 `get_inventory`"。流程与顺序归技能——方法写进 tool description 属于错位,会把"说明书"复制进 Agent 上下文且无法回归。
+- **tool 只做薄委托(骨架已实现)**:tool 函数体只做三件事——边界校验、护栏调用、1–3 行委托 `request_api`;HTTP 客户端构造、响应整形、分页截断全部归骨架的 client 函数(`request_api`/`paginate`),不在 tool 里展开。tool 是契约面,越薄越稳;逻辑越长,契约回归越难做。
+- **tool 数量超过 15 个必须拆层**:业务逻辑抽到 `client.py`(纯函数、经入参接收 settings/creds,可独立单测),tool 层只留"声明 + 校验 + 委托"与 `TOOL_REGISTRY` 映射表(tool 名 -> client 函数),并加脚本校验"每个 tool 恰好委托一个 client 函数、client 函数不直接 new HTTP 客户端"。没到 15 个不要预拆——为拆而拆会牺牲"一个文件看完全部"。
 - **参数名要自解释**:用 `order_id`、`start_date`,避免 `id`、`d1`;每个参数都写类型、单位、取值范围和一个示例。
 - **用枚举而非自由文本**:状态、环境、类型等有限取值,用 `enum` 约束,让校验在 schema 层完成。
 - **返回精简的结构化结果**:只回传 Agent 下一步需要的字段,并带上人能读懂的名称(如返回 `owner_name` 而不仅是 `owner_uuid`)。大结果必须分页或截断,并在返回里说明总数和如何取下一页,避免撑爆上下文(骨架的 `paginate()` 已实现: `items/total/page/has_more/next_page`)。
@@ -49,6 +52,7 @@ tool 的 description、参数名和返回值,是模型唯一能看到的"使用�
 | 白名单 | 目标范围限定为 <库/表/命名空间/主机清单>,清单放配置,不写死在代码 |
 | 限流 | <每分钟/每会话调用上限>; 读、写分开计量,各一份配额 |
 | 审计 | `@audited` 定义即应用: 每次 tool 调用留痕(时间、tool、参数摘要、状态 ok/denied/error);敏感键的值只留哈希前缀,日志不含凭证 |
+| 契约回归 | `skills/skillormcp/scripts/contract_check.py`:用 MCP 客户端经**实际传输**(stdio 子进程 / Streamable HTTP)完成 initialize + tools/list 出快照(名/schema/是否写/破坏性/版本),与基线 diff。删 tool、删必填、类型或枚举收窄、读写标注(`readOnlyHint`/`destructiveHint`)翻转判**破坏**:须阻断提交或升 major + `--allow-breaking` 显式放行;新增 tool / 放宽放行。禁止 import 服务端模块做静态内省代替真实 tools/list |
 | 超时/幂等 | 每个写 tool 设超时(request_api 统一超时);支持幂等键,避免重试造成重复写 |
 
 ## 6. 凭证与配置
@@ -92,7 +96,10 @@ credential_refs:
   配置一旦成为参数就会泄漏进上下文,等于把内部结构交给模型改。
 - **HTTP 唯一出口**:所有对目标系统(含 IdP token 端点)的调用走 `request_api`——统一超时
   (`request_timeout_seconds`)、统一 TLS 校验(`verify_tls`,默认开,关闭须显式写出)、凭证注入、401 重试。
-  禁止在 tool 里直接 new HTTP 客户端。
+  禁止在 tool 里直接 new HTTP 客户端。`request_api(transport=...)` 是测试注入点:外部依赖(httpx)
+  可注入假传输对象,在无网络环境回归 401 刷新/重试/凭证注入,不必 mock httpx 本身。
+- **有外部依赖时测试可注入假传输**:提供 `get_transport(method,url,**kw)` 的替身对象传入
+  `request_api` 的 `transport` 参数即可;不注入则走真实 httpx.Client。生产代码不传该参数。
 - 运行时状态(待确认令牌、限流窗口、凭证缓存/淘汰标记)由 `build_mcp` 创建的实例/闭包持有,便于测试隔离。
 - 配置路径:`MCP_CONFIG` 环境变量指定,缺省当前工作目录下的 `config.yaml`。
 
@@ -115,7 +122,12 @@ credential_refs:
 ## 9. 验收清单(提交前自检)
 - [ ] 至少命中一条 MCP 门槛,并写明原因
 - [ ] 读、写 tool 已拆分;无万能 tool
+- [ ] 每个 tool 都有 annotations:只读标 `readOnlyHint: true`,写标 `readOnlyHint: false`(不可逆再开 `destructiveHint: true`);未标注的 tool 会被契约回归按写侧处理(保守)
 - [ ] 所有 tool 参数中无凭证与连接配置
+- [ ] tool 函数体只做"边界校验 + 护栏 + 1–3 行委托 `request_api`";HTTP/整形/分页逻辑在骨架 client 函数里;tool 数量超过 15 时已拆 `client.py` + 映射表并配脚本校验
+- [ ] 有配套技能承载用法面(调用顺序 / 状态机 / 写前确认);方法未写进 tool description——写进去的部分已挪走
+- [ ] `contract_check.py snapshot` 已产出基线并提交进仓;提交前 `check` 无破坏,或破坏已升 major + `--allow-breaking` 放行并写进提交说明
+- [ ] 有外部依赖时的测试用假传输注入(`request_api(transport=...)`),不 mock httpx 本身
 - [ ] `write_policy` 二选一已配置:gate 开关缺失即拒 / token 两步令牌;写拒绝与令牌失效抛 PermissionError
 - [ ] credential_refs 每个 ref 有独立回退链;成对凭证各走各的链;401 刷新重试一次逻辑未被改坏
 - [ ] HTTP 调用全部走 `request_api`(无绕过出口);超时与 verify_tls 统一管理

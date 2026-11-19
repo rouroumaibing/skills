@@ -371,11 +371,12 @@ def _selftest_asserts() -> None:
     def copy_tools(base, **over):
         tools = json.loads(json.dumps(base["tools"]))
         for k, v in over.items():
-            if k in tools:
-                if v is None:
-                    del tools[k]
-                else:
-                    tools[k].update(v)
+            if v is None:
+                tools.pop(k, None)
+            elif k in tools:
+                tools[k].update(v)
+            else:
+                tools[k] = v
         return tools
 
     b = snap()

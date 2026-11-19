@@ -16,6 +16,12 @@
      - token: prepare(预览+一次性限时令牌)与 apply(校验消费)两步。
   5. Settings 统一加载并校验必填项, 不静默降级; 白名单管控目标;
      @audited 定义即应用, 敏感值哈希脱敏; 列表输出截断分页。
+  6. 读写语义进 tool annotations(readOnlyHint/destructiveHint), 不进参数不进描述:
+     只读 tool 标 readOnlyHint=True; 写 tool 标 readOnlyHint=False(不可逆时再开
+     destructiveHint)。写 tool 函数体只做边界校验+护栏+委托 request_api(1-3 行),
+     HTTP/整形/分页逻辑归骨架的 client 函数, 不在 tool 里展开。
+  7. request_api 的 transport 参数是测试注入点: 外部依赖(httpx)可通过注入
+     假传输对象在无网络环境完成 401 刷新/重试/凭证注入的回归测试。
 """
 import functools
 import hashlib
@@ -287,7 +293,7 @@ def consume_token(settings: Settings, pending: dict[str, dict],
 # ---------- HTTP 唯一出口 ----------
 def request_api(settings: Settings, creds: "CredentialManager", method: str, path: str,
                 *, credential_ref: str | None = None, json_body=None, form_body=None,
-                params=None, headers=None) -> dict:
+                params=None, headers=None, transport=None) -> dict:
     """所有对目标系统(含 IdP token 端点)的 HTTP 调用必须走这里。
 
     - 统一超时(settings.request_timeout_seconds)与 verify_tls(默认开)。
@@ -295,6 +301,10 @@ def request_api(settings: Settings, creds: "CredentialManager", method: str, pat
       声明了 header_name 的 ref 用自定义请求头。凭证值不进日志、不进返回值。
     - 带 credential_ref 的调用遇 401: 刷新凭证(static 链内下移 / oauth 重新换取)
       并重试一次; 仍 401 抛 PermissionError。
+    - transport 参数是测试注入点: 传入 get_transport=callable 的假传输对象
+      (提供 get_transport(method, url, **kw) 返回响应), 即可在不联网的情况下
+      测试 401 刷新/重试/凭证注入逻辑; 生产调用不传, 走真实 httpx.Client。
+      httpx.Client 的构造在此函数内唯一一处, 测试断言 grep 恰一次。
     """
     if json_body is not None and form_body is not None:
         raise ValueError("json_body 与 form_body 二选一")
@@ -312,6 +322,11 @@ def request_api(settings: Settings, creds: "CredentialManager", method: str, pat
                 hdrs[spec.header_name] = value
             else:
                 hdrs.setdefault("Authorization", f"Bearer {value}")
+        if transport is not None:
+            return transport.get_transport(
+                method=method.upper(), url=url,
+                headers=hdrs, params=params, json=json_body, data=form_body,
+                verify=settings.verify_tls, timeout=settings.request_timeout_seconds)
         with httpx.Client(verify=settings.verify_tls,
                           timeout=settings.request_timeout_seconds) as client:
             return client.request(method.upper(), url, headers=hdrs,
@@ -437,13 +452,13 @@ def build_mcp(settings: Settings) -> FastMCP:
     pending: dict[str, dict] = {}                        # token 护栏: 待确认令牌
     rate_bucket: dict[str, list[float]] = {"hits:read": [], "hits:write": []}
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     @audited()
     def list_targets() -> dict:
         """列出当前允许操作的目标。无需参数, 只读。"""
         return {"targets": sorted(settings.allowed_targets)}
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     @audited()
     def get_<noun>(target: str, <key>: str) -> dict:
         """只读: 查询 <noun> 的状态。查询其他资源请用对应的 get_ 工具。
@@ -462,7 +477,7 @@ def build_mcp(settings: Settings) -> FastMCP:
         # TODO: 只返回 Agent 需要的字段, 不要透传上游整包
         return {"target": target, "<key>": <key>, "status": data.get("status", "unknown")}
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True})
     @audited()
     def list_<noun>s(target: str, page: int = 1, page_size: int = 20) -> dict:
         """只读: 分页列出 <noun>。大结果自动截断, 翻页用返回的 next_page。
@@ -481,7 +496,7 @@ def build_mcp(settings: Settings) -> FastMCP:
         return paginate(resp["data"] or [], page=page, page_size=page_size)
 
     if settings.write_policy == "token":
-        @mcp.tool()
+        @mcp.tool(annotations={"readOnlyHint": True})
         @audited()
         def prepare_<change_noun>(target: str, <key>: str, new_value: str) -> dict:
             """写操作第 1 步: 生成变更预览和一次性限时令牌, 不会执行任何修改。
@@ -497,7 +512,7 @@ def build_mcp(settings: Settings) -> FastMCP:
                 "expires_in_seconds": settings.approval_ttl_seconds,
             }
 
-        @mcp.tool()
+        @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
         @audited()
         def apply_<change_noun>(target: str, <key>: str, new_value: str,
                                 approval_token: str) -> dict:
@@ -516,7 +531,7 @@ def build_mcp(settings: Settings) -> FastMCP:
                 raise RuntimeError(f"上游返回 HTTP {resp['status_code']}, 修改未确认生效")
             return {"status": "applied", "status_code": resp["status_code"]}
     else:  # gate
-        @mcp.tool()
+        @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
         @audited()
         def apply_<change_noun>(target: str, <key>: str, new_value: str) -> dict:
             """写操作(类别 <change_category>): 由服务端 env 开关管控, 未开启即拒绝。
@@ -557,3 +572,7 @@ if __name__ == "__main__":
 #   3) list_<noun>s            -> 分页返回(has_more/next_page)
 #   4) 写操作(token 策略): prepare_<change_noun> 返回预览+令牌 -> apply_<change_noun> 凭令牌执行;
 #      写操作(gate 策略): 环境变量 <MCP_WRITE_ALLOW_前缀><写类别大写> 未开启时直接被拒
+#   5) 契约回归: python3 scripts/contract_check.py snapshot --command "python server.py" \
+#         -o contract-baseline.json   (skills/skillormcp/scripts/contract_check.py)
+#      提交前再跑 check 子命令与基线 diff: 删 tool/删必填/类型与枚举收窄/读写标注翻转
+#      判破坏, 须阻断或升 major 后 --allow-breaking 显式放行; 新增/放宽放行。

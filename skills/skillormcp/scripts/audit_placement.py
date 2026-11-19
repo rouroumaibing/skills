@@ -335,6 +335,40 @@ def scan_mcp_tool_params_regex(text):
     return findings
 
 
+def scan_tool_annotations(text):
+    """AST 检查 @*.tool 装饰函数是否声明了 annotations(读写语义), 返回 [(行号, 函数名)]。
+
+    未标注的 tool 不判红线(不是错位, 是缺标注), 由调用方生成提示:
+    契约回归(contract_check.py)会把未标注的 tool 按写侧处理(保守)。
+    语法错误时返回空列表(与反向参数审计一致, 由调用方提示 AST 降级)。
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for dec in node.decorator_list:
+            try:
+                src = ast.unparse(dec)
+            except Exception:
+                continue
+            if "tool" not in src.lower():
+                continue
+            has_annotations = False
+            if isinstance(dec, ast.Call):
+                for kw in dec.keywords:
+                    if kw.arg == "annotations":
+                        has_annotations = True
+                        break
+            if not has_annotations:
+                out.append((node.lineno, node.name))
+            break                        # 只看第一个 tool 装饰器
+    return out
+
+
 def flatten_argv(line):
     """把 ['terraform','apply'] 这类 argv 列表拼成 'terraform apply'，便于写操作匹配。
 
@@ -444,6 +478,8 @@ MCP_CHECKLIST = (
     "[MCP 设计人工确认清单] ①一个API一个tool(避免万能tool)? ②方法是否写进tool description"
     "(应留给skill)? ③是否纯计算也做成了MCP(本可做成skill)? ④写tool是否带限时一次性审批令牌+审计日志?"
     " ⑤SDK类比自检: 能力面(凭证/连接/权限/审计)是否只在服务端, 用法面(顺序/状态机/确认门)是否留给技能?"
+    " ⑥读写语义是否进tool annotations(只读readOnlyHint/写false/不可逆destructiveHint,"
+    "未标注按写侧处理)? tool是否薄委托(校验+护栏+1-3行委托, 超过15个拆client.py+映射表)?"
 )
 
 
@@ -513,11 +549,19 @@ def audit_path(path):
             file_red = {c for _, (_, cs) in groups.items() for c in cs if c in RED_CATS}
             if file_red & {"MCP反模式", "写操作", "万能tool"}:
                 groups[-1] = (MCP_CHECKLIST, {"MCP设计清单"})
-        # 人工确认提示：解析失败 / 非 Python MCP 文件
+        # 人工确认提示：解析失败 / 非 Python MCP 文件 / tool 未标注读写语义
         wmsgs = []
         if ast_failed:
             wmsgs.append("该文件含 FastMCP/mcp 上下文但 Python 语法错误无法 AST 解析, 已回退正则粗扫"
                          "(可能漏检跨行签名), 请人工复核 tool 签名参数。")
+        if mcp_ctx and lang == "py" and not ast_failed:
+            unann = scan_tool_annotations(text)
+            if unann:
+                names = ", ".join(f"{n}(L{l})" for l, n in unann)
+                wmsgs.append(f"以下 tool 未声明 annotations(读写语义): {names}。"
+                             "只读标 readOnlyHint=True; 写标 readOnlyHint=False"
+                             "(不可逆再开 destructiveHint=True)。"
+                             "契约回归(contract_check)会把未标注的 tool 按写侧处理(保守)。")
         if mcp_ctx and lang != "py" and ext in CODE_EXTS:
             wmsgs.append("非 Python 的 MCP 文件, 反向参数审计未执行(仅 Python 支持 AST), "
                          "请人工复核 tool 参数是否含凭证类字段。")
@@ -908,11 +952,46 @@ def self_test():
     if "⑤SDK类比自检" not in MCP_CHECKLIST:
         print("FAIL: MCP 设计人工确认清单缺少第⑤条 SDK 类比自检")
         ok = False
+    if "⑥读写语义是否进tool annotations" not in MCP_CHECKLIST:
+        print("FAIL: MCP 设计人工确认清单缺少第⑥条 annotations/薄委托")
+        ok = False
 
-    # 12) 清单第⑤条与 SKILL.md 描述一致(规范化空白/全角标点后比对, 防止两处措辞漂移)
+    # 11b) tool annotations 缺失检测: 无 annotations 的 @*.tool 应被提示
+    d11 = tempfile.mkdtemp()
+    try:
+        p11 = os.path.join(d11, "server.py")
+        with open(p11, "w") as f:
+            f.write("from fastmcp import FastMCP\nmcp=FastMCP('x')\n@mcp.tool()\n"
+                    "def list_all():\n    return []\n")
+        rep11, warns11 = audit_path(d11)
+        w11 = [w for ws in warns11.values() for w in ws]
+        if not any("未声明 annotations" in w for w in w11):
+            print(f"FAIL: @mcp.tool() 无 annotations 未提示: {w11}")
+            ok = False
+        # 有 annotations 的 tool 不应提示
+        d11b = tempfile.mkdtemp()
+        try:
+            p11b = os.path.join(d11b, "server.py")
+            with open(p11b, "w") as f:
+                f.write("from fastmcp import FastMCP\nmcp=FastMCP('x')\n"
+                        "@mcp.tool(annotations={'readOnlyHint': True})\n"
+                        "def list_all():\n    return []\n")
+            _, warns11b = audit_path(d11b)
+            w11b = [w for ws in warns11b.values() for w in ws]
+            if any("未声明 annotations" in w for w in w11b):
+                print(f"FAIL: 已标注 annotations 仍被误提示: {w11b}")
+                ok = False
+        finally:
+            shutil.rmtree(d11b, ignore_errors=True)
+    finally:
+        shutil.rmtree(d11, ignore_errors=True)
+
+    # 12) 清单第⑤条与 SKILL.md 描述一致(规范化空白/全角标点/反引号/破折后比对, 防止两处措辞漂移)
     def _norm(s):
         s = re.sub(r"\s+", "", s)
-        return s.translate(str.maketrans("：（）？，、／", ":()?,,/"))
+        s = s.replace("`", "")
+        s = s.translate(str.maketrans("：；（）？，、／–—", ":;()?,,/--"))  # type: ignore[arg-type]
+        return s
     try:
         with open(os.path.join(SCANNER_PKG, "SKILL.md"), "r", encoding="utf-8") as f:
             skill_doc = f.read()
