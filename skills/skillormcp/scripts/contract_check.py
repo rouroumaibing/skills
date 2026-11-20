@@ -326,8 +326,10 @@ def diff_snapshots(base: Dict[str, Any], cur: Dict[str, Any]
             breaking.append({"tool": name, "category": "删参数",
                              "detail": f"可选参数 {p} 被删除 (旧调用方传该参数即失败)"})
         for p in sorted(set(cprops) - set(bprops)):
+            if p in creq:
+                continue               # 已按新增必填报过, 不重复进放行清单
             nonbreaking.append({"tool": name, "category": "新增可选参数",
-                                "detail": p})
+                                 "detail": p})
         for p in sorted(set(bprops) & set(cprops)):
             for cat, detail in _param_breaking(p, bprops[p], cprops[p]):
                 breaking.append({"tool": name, "category": cat, "detail": detail})

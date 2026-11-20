@@ -17,6 +17,8 @@
 ## 3. 配套技能
 - 技能名:`skills/<skill-name>`
 - 分工:MCP 负责连接、权限、执行、审计(SDK 能力面);技能负责何时调用、调用顺序、写操作前的人工确认(这份 SDK 的使用说明书)。
+- **触发条件(硬性)**:只要本 MCP 含写操作、多步流程(如 prepare→apply 两步)、调用顺序依赖或用法存在歧义,配套技能就是**必须**项——写 `SKILL.md` 承载用法面,并配 `allowed-tools` 白名单圈定 Agent 可用的 tool;纯只读、单步、无歧义的 MCP 可豁免(豁免理由写在这里)。
+- CI 阻断破坏:契约基线(见 §5)进仓后,CI 跑 `contract_check.py check`,破坏面未按「升 major + `--allow-breaking` + 提交说明」处理的直接挂提交。
 - 方法与流程不写在本 README 或 tool description 里,统一写在技能中。
 
 ## 4. Tool 清单(按任务意图聚合,少而精)
@@ -28,7 +30,7 @@
 规则:
 - 读、写 tool 必须拆开,不得合并成一个带 `mode` 参数的 tool。
 - **读写语义写进 tool annotations**(骨架已实现): 只读 tool 标 `readOnlyHint: true`,写 tool 标 `readOnlyHint: false`(不可逆 / 无法撤销的再开 `destructiveHint: true`);语义进协议层 annotations,不进参数、不进 description。契约回归(见 §5)会把 `readOnlyHint`/`destructiveHint` 翻转判为破坏。
-- 不暴露 `execute_sql`、`run_shell` 这类万能 tool;需要时做成白名单化的具体 tool。
+- 不暴露"任意 SQL 执行""任意 shell"这类万能 tool(执行任意语句的接口一律不做);需要时做成白名单化的具体 tool。
 - 凭证、密码、token 不得出现在任何 tool 参数中。
 
 ## 4.1 工具设计规范(Agent 调用成功率的关键)
@@ -143,4 +145,4 @@ credential_refs:
 
 ## 10. 降级评估(定期复核)
 平台或上游是否已原生提供同等连接能力?若是,评估本 MCP 是否仍值得维护。
-按缺口类型而非"AI 现在能不能"复核; 若使用频率 / 复用客户端数低于维护成本, 评估改为人工代理旁路或短时效凭证一次性, 不必常驻——但凭证仍不交给 Agent。
+按缺口类型而非"AI 现在能不能"复核; 若使用频率 / 复用客户端数低于维护成本, 评估改为人工代理旁路或短时效凭证一次性, 不必长期运行专用服务——但凭证仍不交给 Agent。

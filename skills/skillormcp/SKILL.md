@@ -3,7 +3,7 @@ name: skillormcp
 description: "触发词：判定skill还是MCP、skill和mcp怎么选、落点审计、能力错位、下沉mcp、拆分建议、新增能力该放哪、skill是否在干MCP的活、发布前核对落点、@skillormcp。| Decides whether a capability should be a Skill or an MCP by gap types and the Agent-SDK split (MCP = capability surface, skill = its usage manual), and audits skill/MCP placement for misplacement (a skill doing MCP's job — holding credentials, connecting to an intranet or bastion, keeping stateful sessions, exposing a universal tool, or performing external write operations); reports placement plus deployment shape, a README draft, and a starter scaffold (skill or MCP); never edits or moves files. | ADVISORY ONLY：只报建议、不改文件、不移动任何东西。"
 metadata:
   agent_created: true
-  version: "12"
+  version: "13"
 ---
 
 # skillormcp（判定 Skill / MCP 落点 + 审计错位，建议型 / Advisory）

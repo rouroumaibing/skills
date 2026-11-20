@@ -11,7 +11,7 @@
   - 报告对字面凭证值脱敏（只显 key=***），不把密钥原样打印；且仅在判定为字面值行上遮罩。
   - 反向 MCP 审计（仅 Python，AST 精判）：识别 @*.tool 装饰函数的凭证类参数名（无视类型标注）。
       * Python：优先 AST 精确解析；若文件语法错误 AST 失败，**回退正则粗扫**并明确提示
-        “该文件无法 AST 解析，已回退正则（可能漏检跨行签名）”，绝不静默通过。
+        「该文件无法 AST 解析，已回退正则（可能漏检跨行签名）」，绝不静默通过。
       * 非 Python（TypeScript/JavaScript 等）不做反向 MCP 审计（AST 仅支持 Python；团队只用
         Python，忽略其它语言）。普通规则（写操作/内网/万能tool）仍对所有文件生效。
   - 凭证参数名分强弱两级：
@@ -20,7 +20,7 @@
       * 弱（歧义，降级为提示 MCP可疑参数）：裸 token、credentials（分页 token 等合法用途）。
       * 白名单（明确不报）：page_token、next_token、cursor、csrf_token。
   - 只豁免扫描器【自身包路径】（自审干净），被审计 skill 自带的 templates/ 正常纳入审计，
-    不存在“按目录名全局豁免”的绕过口。
+    不存在「按目录名全局豁免」的绕过口。
   - 判定口径与 SKILL.md 一致: MCP = Agent SDK 的能力面, 技能 = 用法面; 命中硬缺口
     (凭证/连通性/强制性)无逃生舱, 但低频场景可走成本维度换部署形态(需人工确认)。
 
@@ -50,7 +50,7 @@ SCAN_NOEXT_NAMES = {"Dockerfile", "Makefile", "Jenkinsfile", "LICENSE", "AUTHORS
 
 # 跳过目录（按路径组件，跨平台）：版本库/依赖/缓存。
 # 注意：不再含 "templates" —— 被审计 skill 的 templates/ 必须正常审计，
-# 自审干净只靠“豁免自身包路径”实现，不存在全局目录名绕过口。
+# 自审干净只靠「豁免自身包路径」实现，不存在全局目录名绕过口。
 SKIP_DIR_PARTS = {".git", "node_modules", "__pycache__"}
 
 # 扫描器自身包路径（其 SKILL.md/scripts/templates 不纳入审计，保证自审干净）
@@ -111,7 +111,7 @@ MCP_CONTEXT_RE = re.compile(
     r"FastMCP|mcp\.run|@mcp\.tool|@server\.tool|from fastmcp|server\.tool")
 
 # 非 Python 源文件后缀：反向参数审计仅支持 Python AST，这些语言的 MCP 文件跳过该审计，
-# 但需在报告“人工确认项”里提示“反向参数审计未执行，请人工复核”（与 SKILL.md 报告格式一致）。
+# 但需在报告「人工确认项」里提示「反向参数审计未执行，请人工复核」（与 SKILL.md 报告格式一致）。
 # 不含 .md/.json/.yaml 等文档/配置：它们不是 tool 函数签名，反向审计本就不适用，避免误报噪声。
 CODE_EXTS = {".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".rb", ".php",
              ".cs", ".rs", ".c", ".cpp", ".h", ".hpp", ".kt", ".swift", ".scala", ".m"}
@@ -243,6 +243,16 @@ def scan_mcp_antipattern(line):
     return True
 
 
+# tool 装饰器判定：必须是「.tool」成员调用(mcp.tool / server.tool)或裸 @tool。
+# 不许用 "tool" in src 宽匹配 —— functools.wraps 里的 "tools" 会把 @functools.wraps
+# 装饰的 wrapper 误判成 tool(端到端物化冒烟实测命中)。
+TOOL_DECORATOR_RE = re.compile(r"(?:\A|\.)tool(?:\s*\(|\s*\Z)", re.IGNORECASE)
+
+
+def _is_tool_decorator(dec_src: str) -> bool:
+    return bool(TOOL_DECORATOR_RE.search(dec_src.strip()))
+
+
 def scan_mcp_tool_params(text):
     """AST 解析 mcp 上下文里 @*.tool 装饰函数的参数名（无视类型标注）。
 
@@ -250,7 +260,7 @@ def scan_mcp_tool_params(text):
     返回 (findings, ok)：
       findings: {行号: {"strong": set, "weak": set}}
       ok:       True=AST 成功；False=语法错误，调用方应回退正则扫描。
-    非 tool 装饰函数不处理。
+    非 tool 装饰函数不处理(装饰器按 TOOL_DECORATOR_RE 判定, 排除 functools.wraps 等)。
     """
     findings = {}
     try:
@@ -266,7 +276,7 @@ def scan_mcp_tool_params(text):
                 src = ast.unparse(dec)
             except Exception:
                 src = ""
-            if "tool" in src.lower():
+            if _is_tool_decorator(src):
                 is_tool = True
                 break
         if not is_tool:
@@ -355,7 +365,7 @@ def scan_tool_annotations(text):
                 src = ast.unparse(dec)
             except Exception:
                 continue
-            if "tool" not in src.lower():
+            if not _is_tool_decorator(src):
                 continue
             has_annotations = False
             if isinstance(dec, ast.Call):
@@ -466,7 +476,7 @@ def scan_text(text, mcp_context=False):
     return groups, ast_failed
 
 
-# 确认门启发式：要求“真正确认步骤”短语，而非裸“确认”字样
+# 确认门启发式：要求「真正确认步骤」短语，而非裸「确认」字样
 GATE_PHRASE_RE = re.compile(
     r"确认(后|后再|前|步骤|无误|后执行)|二次确认|需(要|经)?(人工)?确认|"
     r"经(用户|人工)确认|请(先)?确认|询问用户|审批(通过|后)|"
@@ -985,6 +995,30 @@ def self_test():
             shutil.rmtree(d11b, ignore_errors=True)
     finally:
         shutil.rmtree(d11, ignore_errors=True)
+
+    # 11c) functools.wraps 装饰的 wrapper 不是 tool("functools" 含 "tools" 曾致误判,
+    #      端到端物化冒烟实测): 反向审计与 annotations 提示都不得命中
+    wrap_src = ("import functools\n"
+                "def audited(fn):\n"
+                "    @functools.wraps(fn)\n"
+                "    def wrapper(*args, **kwargs):\n"
+                "        return fn(*args, **kwargs)\n"
+                "    return wrapper\n")
+    g11c, _ = scan_text(wrap_src, mcp_context=True)
+    if any("MCP反模式" in c or "MCP可疑参数" in c for _, (_, cs) in g11c.items() for c in cs):
+        print("FAIL: functools.wraps 的 wrapper 被误判为 tool(反向审计)")
+        ok = False
+    if scan_tool_annotations(wrap_src):
+        print(f"FAIL: functools.wraps 的 wrapper 被误判为 tool(annotations 提示): "
+              f"{scan_tool_annotations(wrap_src)}")
+        ok = False
+    # 而真正的 @mcp.tool 仍要被认出
+    real_src = ("from fastmcp import FastMCP\nmcp = FastMCP('x')\n"
+                "@mcp.tool\n"
+                "def list_all():\n    return []\n")
+    if not scan_tool_annotations(real_src):
+        print("FAIL: 真正的 @mcp.tool 反而未被识别(annotations 提示)")
+        ok = False
 
     # 12) 清单第⑤条与 SKILL.md 描述一致(规范化空白/全角标点/反引号/破折后比对, 防止两处措辞漂移)
     def _norm(s):
