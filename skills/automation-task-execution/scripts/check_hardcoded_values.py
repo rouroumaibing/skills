@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Report hardcoded-value candidates in delivered test code.
 
-Six-item reconciliation ("六对账") includes 写死值清零: literal values copied
-from exploration transcripts (real tokens, order ids, sample response values)
-must not survive into delivered code — they break the moment the environment
-or the data rotates. This script is the mechanical check for that item.
+Eight-item reconciliation ("八对账") includes 写死值清零: literal values copied
+from exploration transcripts (real tokens, order ids, sample response values,
+environment addresses / URLs / hostnames) must not survive into delivered
+code — they break the moment the environment or the data rotates. This
+script is the mechanical check for that item.
 
 It scans code files line by line and reports lines that look like they embed
 such literals. It only *reports* — it never edits files. Exit code is 0 when
@@ -12,8 +13,12 @@ nothing looks hardcoded, 1 when candidates need human review.
 
 Design notes:
 - High-confidence shapes only (宁缺勿滥): tokens, JWTs, API keys, long hex
-  or digit runs, UUIDs, CN mobile numbers, full ISO timestamps. Plain
-  integers, versions like "1.2.3" and dates without a time part do not fire.
+  or digit runs, UUIDs, CN mobile numbers, full ISO timestamps, private-IP
+  ranges, and environment URLs/hostnames (internal TLD like .local/.internal/
+  .corp/.lan, bare no-dot hosts, env-suffixed domains like api-dev.*). Plain
+  integers, versions like "1.2.3", dates without a time part and public
+  domains (api.example.org) do not fire; bare hostnames without a URL
+  scheme are left to manual review (too ambiguous to auto-flag).
 - Output is a lead, not a conclusion: a legitimate fixed sample value may
   match. Mark the line with an `allow-hardcode` comment to document and
   suppress it; suppression is per-line and visible in review.
@@ -55,6 +60,16 @@ PATTERNS: List[Tuple[str, re.Pattern]] = [
     ("手机号", re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")),
     ("ISO 时间戳", re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")),
     ("超长数字 ID", re.compile(r"(?<!\d)\d{16,}(?!\d)")),
+    ("内网 IP", re.compile(
+        r"(?<![\w.])(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+        r"|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}"
+        r"|192\.168\.\d{1,3}\.\d{1,3}"
+        r"|169\.254\.\d{1,3}\.\d{1,3}"
+        r"|127\.0\.0\.1)(?![\w.])")),
+    ("环境 URL/主机名", re.compile(
+        r"https?://(?:[a-z0-9-]+\.)*(?:local|internal|corp|lan)(?=$|[\s/\"':?&)])"
+        r"|https?://[a-z0-9-]+(?::\d{2,5})?(?=$|[\s/\"':?&)])"
+        r"|https?://[a-z0-9.-]*(?:-dev|-test|-staging|-uat|-pre|-prod|-gray)[-a-z0-9.:/]*")),
 ]
 
 EXEMPT_MARK = "allow-hardcode"
@@ -159,11 +174,22 @@ def selftest() -> int:
         ("phone = '13812345678'", "手机号"),
         ("ts = '2026-11-13T10:30:00'", "ISO 时间戳"),
         ("order = '1234567890123456'", "超长数字 ID"),
+        ('base_url = "http://10.1.2.3:8080"', "内网 IP"),
+        ('host = "172.16.3.4"', "内网 IP"),
+        ('ssh = "root@192.168.1.10"', "内网 IP"),
+        ('url = "https://jumpbox.internal:22"', "环境 URL/主机名"),
+        ('url = "http://myhost:9090/api"', "环境 URL/主机名"),
+        ('url = "https://api-dev.example.com/v1"', "环境 URL/主机名"),
+        ('url = "http://svc.cluster.local:9090"', "环境 URL/主机名"),
     ]
     should_miss = [
         "resp = client.get(url, params={'page': 2})",
         "assert resp['code'] == 0",
         "version = '1.2.3'",
+        "quadruple = '1.2.3.4'",                  # 4 octets but public range
+        "url = 'https://github.com/example/repo'",        # public domain
+        "endpoint = 'https://api.example.org/v1'",         # public domain
+        "see https://nodejs.example.org/dist/ for details",  # public domain in comment
         "short_hex = '0123456789abcdef'",        # 16 hex: below threshold
         "digits12 = '123456789012'",              # 12 digits: below threshold
         "date_only = '2026-11-13'",               # no time part
