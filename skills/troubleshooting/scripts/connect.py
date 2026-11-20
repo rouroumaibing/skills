@@ -2,7 +2,8 @@
 """connect.py — verify bastion SSH reachability and that kubectl works on it.
 
 Prints machine-readable statuses:
-  BASTION_OK / NEEDS_MANUAL_AUTH / KUBECTL_OK / KUBECTL_FAIL
+  BASTION_OK / NEEDS_MANUAL_AUTH / KUBECTL_OK / KUBECTL_UNAVAILABLE
+(KUBECTL_UNAVAILABLE is a warning, not a failure: node/host channels still work.)
 
 Usage:
   connect.py
@@ -35,9 +36,17 @@ def main() -> None:
         if result.stdout.strip():
             print(result.stdout.rstrip())
     else:
-        print(f"status=KUBECTL_FAIL namespace={conn.namespace or 'default'} "
+        # kubectl is optional for the node/host channels: they resolve IPs via
+        # direct IP / conn.node_ips / direct-tcpip tunnel. Only kubectl-backed
+        # subcommands (pods/logs/events/describe/resolve-by-name) are affected,
+        # so report a warning instead of failing the whole connection check.
+        detail = ((result.stderr or "").strip())[:200]
+        print(f"status=KUBECTL_UNAVAILABLE namespace={conn.namespace or 'default'} "
               f"context={conn.context or 'default'}")
-        sys.exit(1)
+        print("  kubectl 不可用/未安装；pod 类命令与按节点名解析不可用，"
+              "但节点通道可传 IP 或用 conn.node_ips 映射、host 通道走直连隧道")
+        if detail:
+            print(f"  远端提示: {detail}")
 
 
 if __name__ == "__main__":

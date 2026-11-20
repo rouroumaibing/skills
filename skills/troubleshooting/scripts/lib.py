@@ -22,14 +22,14 @@ Design notes
   accepted (added), but a *changed* key for an already-known host is rejected
   (``BadHostKeyException``) rather than silently trusted.
 * The bastion -> node hop still runs ``ssh`` *on the bastion* (see execute_on_node),
-  so the shared bastion key model is preserved and no ``ssh`` binary is needed locally.
-  A direct-tcpip tunnel through the bastion transport (as used by testkit's SSHExecutor)
-  was evaluated and rejected: it requires node credentials on the local machine, which
-  contradicts the personal-key(local->bastion) / shared-key(bastion->nodes) distribution.
-* Resilience borrowed from testkit: transports carry a keepalive (DEFAULT_KEEPALIVE) so
-  idle NAT gateways do not drop connections mid-session; a transport-level exec failure
-  reconnects once and retries (command timeouts are NOT retried — the command may have
-  started remotely); _Result records wall-clock duration for evidence quality.
+  so the shared bastion key model is preserved and no ``ssh`` binary is needed locally;
+  node credentials never live on the local machine. For non-cluster machines, the
+  separate host channel (execute_on_host) does open a direct-tcpip tunnel using creds
+  from local config.
+* Transports carry a keepalive (DEFAULT_KEEPALIVE) so idle NAT gateways do not drop
+  connections mid-session; a transport-level exec failure reconnects once and retries
+  (command timeouts are NOT retried — the command may have started remotely);
+  _Result records wall-clock duration for evidence quality.
 * The module is intentionally read-only: it never mutates the cluster or nodes,
   only a small per-user cache under ~/.cache.
 * Time-related tunables (connect/probe/cache/request) live in config.conn and
@@ -164,7 +164,8 @@ class Connection:
 
     def __init__(self, bastion_host, user, context, namespace,
                  public_ip, private_ip, connect_timeout, probe_timeout,
-                 cache_ttl, request_timeout, public_port=None):
+                 cache_ttl, request_timeout, public_port=None,
+                 node_ips=None, host_credentials=None):
         self.bastion_host = bastion_host
         self.user = user
         self.context = context
@@ -176,25 +177,33 @@ class Connection:
         self.probe_timeout = probe_timeout
         self.cache_ttl = cache_ttl
         self.request_timeout = request_timeout
+        # node name -> IP static map: lets node channels work without kubectl.
+        self.node_ips = node_ips or {}
+        # host -> {user, password, port}: credentials for direct-tcpip tunnels.
+        self.host_credentials = host_credentials or {}
 
 
 def load_connection() -> Connection:
     """Resolve the bastion host and return a Connection.
 
-    Private IP is preferred (faster LAN); on failure we fall back to the public IP.
-    The resolved host is cached for ``cache_ttl`` seconds under ~/.cache, but the
-    cached value is only trusted when it equals one of the two IPs from config —
-    so a tampered cache on a shared machine cannot redirect traffic to a fake
-    bastion.  ``conn.public-port`` (optional, default 22) is resolved once here
-    and later applied only to the public path by bastion_target().
+    Public IP wins whenever it is configured: setting a public address means the
+    private LAN is NOT directly reachable from this machine, so the public path
+    is the intended one.  Only when no public IP is set do we use the private IP
+    (pure intranet setups may either omit public-ip or set it to the same value).
+    At least one of the two must be configured.  ``conn.public-port`` (optional,
+    default 22) applies only to the public path via bastion_target().
+
+    ``conn.node_ips`` (name -> IP) and ``conn.host_credentials`` (host -> creds)
+    are parsed here once and carried on the Connection for the kubectl-free node
+    path and the direct-tcpip host tunnel respectively.
     """
     global _connection
     config = load_config()
     conn_cfg = config.get("conn", {}) or {}
     public_ip = (conn_cfg.get("public-ip") or "").strip()
     private_ip = (conn_cfg.get("private-ip") or "").strip()
-    if not public_ip:
-        die("config.conn.public-ip 未配置")
+    if not public_ip and not private_ip:
+        die("config.conn.public-ip / private-ip 至少配置一个")
 
     public_port = None
     raw_port = str(conn_cfg.get("public-port") or "").strip()
@@ -214,47 +223,43 @@ def load_connection() -> Connection:
     except (TypeError, ValueError) as exc:
         die(f"config.conn 的时间配置必须是数字: {exc}")
 
-    bastion_host = None
-    if private_ip:
-        cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "troubleshooting-bastion")
-        os.makedirs(cache_dir, exist_ok=True)
-        os.chmod(cache_dir, 0o700)
-        cache_file = os.path.join(cache_dir, re.sub(r"[^A-Za-z0-9]", "_", private_ip) + ".cache")
-        now = int(time.time())
-        cached_ts = cached_ip = None
-        if os.path.isfile(cache_file) and os.access(cache_file, os.R_OK):
-            try:
-                with open(cache_file) as fh:
-                    parts = fh.read().split()
-                if len(parts) >= 2:
-                    cached_ts, cached_ip = parts[0], parts[1]
-            except OSError as exc:
-                sys.stderr.write(f"warn: 读取缓存失败，忽略并重新探测: {exc}\n")
-                cached_ts = cached_ip = None
-        if (cached_ts and cached_ip and re.fullmatch(r"[0-9]+", cached_ts)
-                and (now - int(cached_ts)) < cache_ttl
-                and cached_ip in (private_ip, public_ip)):
-            bastion_host = cached_ip
-        elif cached_ip and cached_ip not in (private_ip, public_ip):
-            sys.stderr.write(
-                f"warn: 缓存 IP({cached_ip}) 不在配置白名单，已忽略并重新探测\n")
-        if bastion_host is None:
-            if _ssh_succeeds(f"{user}@{private_ip}", timeout=probe_timeout):
-                bastion_host = private_ip
+    # Public-first: configured public IP is the intended path (see docstring).
+    bastion_host = public_ip or private_ip
+
+    node_ips = {}
+    raw_node_ips = conn_cfg.get("node_ips") or {}
+    if isinstance(raw_node_ips, dict):
+        for name, ip in raw_node_ips.items():
+            name, ip = str(name).strip(), str(ip).strip()
+            if re.fullmatch(r"[A-Za-z0-9._-]+", name) and re.fullmatch(r"[0-9A-Fa-f.:]+", ip):
+                node_ips[name] = ip
             else:
-                bastion_host = public_ip
-            try:
-                with open(cache_file, "w") as fh:
-                    fh.write(f"{now} {bastion_host}\n")
-            except OSError as exc:
-                sys.stderr.write(f"warn: 写入缓存失败（不影响功能）: {exc}\n")
-    else:
-        bastion_host = public_ip
+                sys.stderr.write(f"warn: conn.node_ips 忽略非法条目 {name} -> {ip}\n")
+
+    host_credentials = {}
+    raw_creds = conn_cfg.get("host_credentials") or {}
+    if isinstance(raw_creds, dict):
+        for host, cred in raw_creds.items():
+            host = str(host).strip()
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", host):
+                sys.stderr.write(f"warn: conn.host_credentials 忽略非法 host {host}\n")
+                continue
+            if not isinstance(cred, dict):
+                die(f"config.conn.host_credentials.{host} 必须是 map（user/password/port）")
+            raw_hport = str(cred.get("port") or DEFAULT_SSH_PORT).strip()
+            if not raw_hport.isdigit() or not (1 <= int(raw_hport) <= 65535):
+                die(f"config.conn.host_credentials.{host}.port 不合法: {raw_hport}")
+            host_credentials[host] = {
+                "user": str(cred.get("user") or user).strip(),
+                "password": cred.get("password"),
+                "port": int(raw_hport),
+            }
 
     _connection = Connection(bastion_host, user, context, namespace,
                              public_ip, private_ip, connect_timeout,
                              probe_timeout, cache_ttl, request_timeout,
-                             public_port=public_port)
+                             public_port=public_port, node_ips=node_ips,
+                             host_credentials=host_credentials)
     return _connection
 
 
@@ -540,10 +545,10 @@ def _ssh_succeeds(target: str, *, timeout: int) -> bool:
 def bastion_target(conn: "Connection", host: str | None = None) -> str:
     """Assemble ``user@host[:port]`` for reaching the bastion.
 
-    *host* defaults to the resolved bastion host (private IP first, public IP
-    on fallback).  ``conn.public-port`` is appended only when the target is the
-    bastion's *public* address — the private LAN path never uses it, so the
-    internal network keeps connecting on port 22.
+    *host* defaults to the resolved bastion host (public IP wins when set).
+    ``conn.public-port`` is appended only when the target equals the configured
+    public address — the private LAN path never uses it, so the internal network
+    keeps connecting on port 22.
     """
     host = host or conn.bastion_host
     target = f"{conn.user}@{host}"
@@ -588,25 +593,147 @@ _IP_TOKEN_RE = re.compile(r"[0-9a-fA-F.:]+")
 
 
 def resolve_node_ip(name: str) -> str:
-    """Return ONE InternalIP of a node (never built from user input).
+    """Return the IP of a node, WITHOUT requiring kubectl when avoidable.
+
+    Resolution order (kubectl-free paths first so a missing/unavailable kubectl
+    never blocks node channels):
+      1. *name* is already an IP literal  -> return it as-is;
+      2. ``conn.node_ips`` static map      -> return the configured IP;
+      3. kubectl ``get node ...InternalIP`` -> dynamic lookup (last resort).
 
     jsonpath 对双栈节点会返回空格分隔的多个地址；不拆分直接拼进 hop 命令
     会变成 ``ssh root@10.0.0.5 fd00::5 '...'``（远端执行 fd00::5 df -h）。
     优先取 IPv4，否则取第一个合法 token。
     """
-    if not re.fullmatch(r"[a-z0-9.-]+", name):
-        die(f"节点名不合法: {name}")
+    if not re.fullmatch(r"[A-Za-z0-9._:-]+", name):
+        die(f"节点标识不合法: {name}")
+    # 1. Already an IP: no kubectl needed.
+    if re.fullmatch(r"[0-9A-Fa-f.:]+", name):
+        return name
+    # 2. Static map from config (explicitly for kubectl-less environments).
+    mapping = (_connection.node_ips if _connection is not None else None) or {}
+    if name in mapping:
+        return mapping[name]
+    # 3. Dynamic lookup via kubectl.
     result = run_kubectl("get", "node", name,
                          "-o", r'jsonpath={.status.addresses[?(@.type=="InternalIP")].address}',
                          capture=True, check=False)
     ip = (result.stdout or "").strip() if result else ""
     if not ip:
-        die(f"集群中没有节点 {name}")
+        die(f"集群中没有节点 {name}（kubectl 不可用或未配 node_ips 映射时，"
+            f"请直接传节点 IP 或在 config.conn.node_ips 登记）")
     tokens = [t for t in ip.split() if _IP_TOKEN_RE.fullmatch(t)]
     if not tokens:
         die(f"节点 {name} 的 InternalIP 不合法: {ip}")
     v4 = [t for t in tokens if ":" not in t]
     return (v4 or tokens)[0]
+
+
+def _tunnel_client(key: str, host: str, cred: dict, timeout: int) -> "paramiko.SSHClient":
+    """Return a client connected to *host* through a direct-tcpip tunnel on the bastion.
+
+    The bastion only relays a TCP socket; the SSH session (including password
+    auth and host-key verification) is established end-to-end from this machine.
+    That is what lets us reach arbitrary non-cluster machines with a password,
+    without needing an ``ssh`` binary or sshpass on the bastion.
+    """
+    cached = _clients.get(key)
+    if cached is not None:
+        transport = cached.get_transport()
+        if transport is not None and transport.is_active():
+            return cached
+        _close_client(key)
+
+    jump = get_client(bastion_target(_connection), timeout=timeout)
+    transport = jump.get_transport()
+    if transport is None or not transport.is_active():
+        raise _ConnFailure("跳板机 transport 不可用，无法开隧道")
+    port = cred["port"]
+    try:
+        sock = transport.open_channel("direct-tcpip", (host, port), ("127.0.0.1", 0))
+    except Exception as exc:  # paramiko raises several channel errors here
+        raise _ConnFailure(f"开 direct-tcpip 隧道失败 {host}:{port}: {exc}")
+
+    client = make_ssh_client()
+    kwargs = {
+        "hostname": host, "port": port, "username": cred["user"],
+        "sock": sock, "timeout": timeout,
+        "banner_timeout": timeout + 10, "auth_timeout": timeout + 10,
+    }
+    password = cred.get("password")
+    if password is not None and password != "":
+        kwargs.update(password=password, allow_agent=False, look_for_keys=False)
+    else:
+        kwargs.update(allow_agent=True, look_for_keys=True)
+    try:
+        client.connect(**kwargs)
+    except paramiko.AuthenticationException:
+        _safe_close(client)
+        raise _AuthFailure(f"目标机 {host} 认证被拒（检查 host_credentials 密码）")
+    except paramiko.BadHostKeyException as exc:
+        _safe_close(client)
+        raise _ConnFailure(f"目标机 {host} 主机密钥不匹配(疑被篡改): {exc}")
+    except (paramiko.SSHException, socket.timeout, OSError) as exc:
+        _safe_close(client)
+        raise _ConnFailure(f"隧道连接失败 {host}:{port}: {exc}")
+    tr = client.get_transport()
+    if tr is not None:
+        tr.set_keepalive(DEFAULT_KEEPALIVE)
+    _clients[key] = client
+    return client
+
+
+def execute_on_host(host: str, *command, timeout: int | None = None,
+                    capture: bool = True, check: bool = True):
+    """Run *command* on an arbitrary host through a direct-tcpip tunnel on the bastion.
+
+    Credentials come only from ``config.conn.host_credentials[host]``.  Passwords
+    are never printed: failures map to generic statuses.  Host is strictly
+    validated and shell-quoted so no command injection is possible.
+    """
+    if _connection is None:
+        die("load_connection() 未调用")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", host) or host.startswith("-"):
+        die(f"host 不合法: {host}")
+    cred = (_connection.host_credentials or {}).get(host)
+    if cred is None:
+        die(f"host {host} 未配置凭据（config.conn.host_credentials.{host}）")
+    timeout = timeout or _connection.connect_timeout
+    key = f"tunnel:{cred['user']}@{host}:{cred['port']}"
+    try:
+        client = _tunnel_client(key, host, cred, timeout)
+    except _AuthFailure as exc:
+        sys.stderr.write(f"warn: {exc}\n")
+        if check:
+            die(f"HOST_AUTH_FAIL host={host}：{exc}")
+        return _Result(255)
+    except _ConnFailure as exc:
+        sys.stderr.write(f"warn: 隧道失败 {host}: {exc}\n")
+        if check:
+            die(f"HOST_CONN_FAIL host={host}: {exc}")
+        return _Result(255)
+    return run_ssh_via(client, key, command, timeout=timeout,
+                       capture=capture, check=check)
+
+
+def run_ssh_via(client: "paramiko.SSHClient", key: str, command,
+                *, timeout: int, capture: bool, check: bool) -> _Result:
+    """Execute *command* on an already-connected cached client (tunnel path)."""
+    remote = shlex.join(command)
+    try:
+        return _exec_once(client, key, remote, timeout, capture)
+    except (socket.timeout, TimeoutError):
+        _close_client(key)
+        sys.stderr.write(f"warn: 远端命令超时 {key}\n")
+        if check:
+            die(f"远端命令超时 {key}")
+        return _Result(255)
+    except (paramiko.SSHException, OSError) as exc:
+        _close_client(key)
+        sys.stderr.write(f"warn: 远端命令失败 {key}: {exc}\n")
+        if check:
+            die(f"远端命令失败 {key}: {exc}")
+        return _Result(255)
 
 
 def execute_on_node(node_ip: str, *command, timeout: int | None = None,

@@ -17,11 +17,11 @@
 线索确实为空时，不要问用户，直接跑最便宜的广谱发现：`events --warnings` + `pods`（专找非 Running / 重启次数大的）。
 
 ### 1. 第一段·全量发现（无 ns / 目录边界，目标「不漏」）
-1. `scripts/connect.py`：必须看到 BASTION_OK 和 KUBECTL_OK 再继续。
+1. `scripts/connect.py`：必须看到 BASTION_OK 再继续；KUBECTL_OK 更好，但 KUBECTL_UNAVAILABLE 只是警告——此时 pod 类命令与按节点名解析不可用，节点通道改传 IP / 配 `conn.node_ips`，非集群机器走 host 通道，均不需 kubectl。
 2. `scripts/logs.py pods [component]`：默认 `-A` 全部 namespace，`-o wide` 看状态/重启次数/所在节点；`-n <ns>` 可收窄。
 3. `scripts/logs.py events --warnings`：默认 `-A`，按时间排序；`--for <pod>` 聚焦单个对象；`--max N` 控制条数。
 4. 节点侧先建索引再读内容：`scripts/logs.py node-find <node> --name "*.log" --newer 2h`。
-   扫描目录集默认 `/var/log`、`/var/log/pods`、`/var/log/containers`、`/data/logs`、`/var/lib/kubelet`（`conn.scan_dirs` 可覆盖），只列普通文件、不跟随软链接。
+   扫描目录集默认 `/var/log`、`/var/log/pods`、`/var/log/containers`、`/data/logs`（`conn.scan_dirs` 可覆盖），只列普通文件、不跟随软链接；`/var/lib/kubelet` 含节点 pki 私钥，**刻意不在缺省集**，确需读取由运维显式加入 `conn.scan_dirs`。
 
 ### 2. 第二段·精确下钻（按线索收敛，目标「不炸」）
 - `scripts/logs.py logs <component> --since 30m --grep "ERROR" --context 3`：

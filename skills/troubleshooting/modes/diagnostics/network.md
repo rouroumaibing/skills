@@ -71,6 +71,31 @@ logs.py node-exec --scenario pod <node> docker inspect <容器id或名> --format
 - `traceroute <目标>`：出口路径
 - `ip -br addr` / `ip route show`：节点侧地址与路由
 
+## 抓包定位丢包点（tcpdump）
+
+当 ping/traceroute 只给出"通/不通"二值、无法定位**在哪一跳丢包**时，用节点上的 `tcpdump` 抓包取证。它走 network 场景白名单，且**强制只读约束**：必须带 `-c <count>`（上限 200，防无界抓包）、禁止 `-w`/`-C`/`-W` 写盘或轮转、禁止 `-Z` 切权限、只输出到 stdout。
+
+```bash
+# 抓某主机往来报文（host 可换 src host / dst host；port 同理）
+logs.py node-exec --scenario network <node> tcpdump -i eth0 -c 100 -nn host <对端IP>
+# 抓某端口（如 DNS 53）看请求是否发出、响应是否回来
+logs.py node-exec --scenario network <node> tcpdump -i any -c 50 -nn port 53
+# 容器视角抓包：先拿 pause PID，再进容器 netns（精简镜像无 tcpdump 时也用这条）
+logs.py pause-pid <node> --name <pod> --namespace <ns>
+logs.py nsenter-net <node> <pid> tcpdump -i any -c 50 -nn host <对端IP>
+```
+
+**丢包点判读**（结合多点抓包做对照）：
+- 客户端抓到 SYN 但服务端同时间点抓不到 → 丢在**中间链路**（路由/安全组/NetworkPolicy），不在两端；
+- 服务端抓到 SYN 并回 SYN-ACK、客户端却抓不到 SYN-ACK → 丢在**回程路径**（非对称路由常见）；
+- 两端都抓到完整三次握手、但业务请求无响应 → 丢在**应用层**（回到 Service/endpoints/端口监听层查）。
+- 抓播报先按 host/port 收窄，避免 `-c` 配额被无关流量吃满；一次抓不到就在更靠近源/目标的节点重抓做对照。
+
+**非集群机器**（不在 K8s 里的网关/DB/负载均衡）用 host 通道抓，凭据走 `config.conn.host_credentials`：
+```bash
+logs.py host-exec --scenario network <host> tcpdump -i eth0 -c 100 -nn host <对端IP>
+```
+
 ## 最小充分集（网络类问题下结论前必看）
 1. 分层定位：从 DNS 开始逐层向上（或按现象直接切入对应层），**记录断在哪一层**；
 2. 断点层的一条直接证据：如 DNS 层的 `dig` 失败原文、Service 层的 `ss`/`iptables` 输出、Pod 间层的 ping 结果；

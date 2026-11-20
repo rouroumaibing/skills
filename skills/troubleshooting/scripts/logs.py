@@ -18,6 +18,8 @@ Subcommands:
   node-find <node> [--name PAT] [--newer 10m|2h|1d] [--max N]
   node-exec <node> <command...> [--scenario node|network|pod]
   pause-pid <node> [--name POD] [--namespace NS]
+  host-exec <host> <command...> [--scenario node|network|pod]
+  host-log <host> <file> [--any-path] [--tail N] [--grep PAT] ...
   nsenter-net <node> <pid> <command...>
 
 Discovery-first model (problem-driven two-stage troubleshooting):
@@ -101,6 +103,11 @@ _SCENARIO_COMMANDS: dict[str, dict[str, str]] = {
         "iptables":   r"(-L|-S|-L -n|-S -n|-L -n -v|-S -n -v|-nvL|-L --line-numbers"
                       r"|-t (nat|filter|mangle) -L -n|)",
         "conntrack":  r"(-L|-L -n|)",
+        # Read-only packet capture for loss-point localisation. The gate in
+        # _validate_tcpdump() enforces: mandatory bounded -c, NO -w/-C/-W
+        # (file writes), no -D/-Z (host facts beyond scope), and a hard cap
+        # on packet count so a capture can never run unbounded.
+        "tcpdump": r"",  # validated by _validate_tcpdump(), not by fullmatch
     },
     "pod": {
         "crictl": r"(ps( -a)?|pods|images|stats|inspect [a-f0-9]{8,64}"
@@ -404,17 +411,85 @@ def _pause_pid(node_ip: str, name: str, namespace: str) -> tuple[str, str]:
     return pid, runtime
 
 
+# tcpdump 合法 token：只允许只读捕获相关开关，明确禁止写盘/轮转/权限切换。
+_TCPDUMP_ALLOWED_FLAGS = {
+    "-i", "-c", "-nn", "-n", "-tttt", "-tt", "-v", "-vv", "-vvv",
+    "-s", "-q", "-e", "-X", "-XX", "-A", "-l", "-K", "-p",
+}
+_TCPDUMP_MAX_COUNT = 200
+_TCPDUMP_VALUE_FLAGS = {"-i", "-c", "-s"}  # 必须带值的开关
+
+
+def _validate_tcpdump(rest: str) -> None:
+    """Validate tcpdump args: bounded capture, no file writes, no privilege changes.
+
+    Design: tcpdump is read-only ONLY when output stays on stdout with a bounded
+    packet count. We reject -w/-C/-W (write/rotate files), -D/-Z (host probes /
+    privilege drop), any expression that is not a plain host/port/net filter,
+    and require a -c count with a hard cap. Anything ambiguous is refused —
+    an agent troubleshooting loss does not need write or host-enumeration flags.
+    """
+    tokens = rest.split()
+    if not tokens:
+        lib.die("tcpdump 需要参数；例如: tcpdump -i eth0 -c 50 -nn host 10.0.0.1")
+    forbidden = {"-w", "-C", "-W", "-D", "-Z", "-r", "-F", "-G", "-z", "-Z"}
+    count = None
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in forbidden:
+            lib.die(f"tcpdump 参数 {tok} 被禁止（不允许写文件/轮转/主机枚举/权限切换）")
+        if tok in _TCPDUMP_VALUE_FLAGS:
+            if i + 1 >= len(tokens):
+                lib.die(f"tcpdump 参数 {tok} 缺少值")
+            val = tokens[i + 1]
+            if tok == "-c":
+                if not re.fullmatch(r"[1-9][0-9]*", val):
+                    lib.die("tcpdump -c 必须是正整数")
+                count = int(val)
+                if count > _TCPDUMP_MAX_COUNT:
+                    lib.die(f"tcpdump -c 上限 {_TCPDUMP_MAX_COUNT}（防止无界抓包）；"
+                            f"需要更长捕获请分多次带过滤条件执行")
+            elif tok == "-i":
+                if not re.fullmatch(r"[A-Za-z0-9_.:-]+", val):
+                    lib.die(f"tcpdump -i 接口名不合法: {val}")
+            elif tok == "-s" and not re.fullmatch(r"[0-9]+", val):
+                lib.die(f"tcpdump -s 必须是非负整数: {val}")
+            i += 2
+            continue
+        if tok in _TCPDUMP_ALLOWED_FLAGS or tok.startswith("-"):
+            # 已知布尔开关放行；未知 '-' 开头一律拒绝（防 DBG/注入类开关）
+            if tok not in _TCPDUMP_ALLOWED_FLAGS:
+                lib.die(f"tcpdump 未知或被禁止的开关: {tok}")
+            i += 1
+            continue
+        # 位置参数：只接受 bare filter 表达式 token（host/port/net/ip/and/or/not/数字/域名）
+        if not re.fullmatch(r"[A-Za-z0-9._:-]+", tok):
+            lib.die(f"tcpdump 过滤表达式含非法字符: {tok}")
+        i += 1
+    if count is None:
+        lib.die("tcpdump 必须带 -c <count> 限定抓包数量（防止无界运行）")
+
+
 def _validate_node_exec(args) -> None:
     """Gate node-exec behind the per-scenario read-only allow-list (pre-network)."""
     scenario = args.scenario
     if scenario not in _SCENARIO_COMMANDS:
         lib.die(f"--scenario 只支持: {' '.join(sorted(_SCENARIO_COMMANDS))}")
     allowed = _SCENARIO_COMMANDS[scenario]
-    command = args.node_command[0] if args.node_command else ""
+    # node-exec uses args.node_command; host-exec reuses this gate but stores
+    # argv in args.host_command. Read whichever the parser provided.
+    argv = getattr(args, "node_command", None)
+    if argv is None:
+        argv = getattr(args, "host_command", [])
+    command = argv[0] if argv else ""
     if command not in allowed:
         lib.die(f"场景 {scenario} 不允许执行 {command or '(空)'}；"
                 f"可用命令: {' '.join(sorted(allowed))}")
-    rest = " ".join(args.node_command[1:])
+    rest = " ".join(argv[1:])
+    if command == "tcpdump":
+        _validate_tcpdump(rest)
+        return
     if not re.fullmatch(allowed[command], rest):
         lib.die(f"参数不被允许（场景 {scenario}）: {command} {rest}")
 
@@ -435,6 +510,9 @@ def _validate_nsenter_net(args) -> None:
         lib.die(f"nsenter-net 内部命令仅限 network 场景白名单: {command or '(空)'}；"
                 f"可用: {' '.join(sorted(allowed))}")
     rest = " ".join(args.net_command[1:])
+    if command == "tcpdump":
+        _validate_tcpdump(rest)
+        return
     if not re.fullmatch(allowed[command], rest):
         lib.die(f"参数不被允许: {command} {rest}")
 
@@ -497,6 +575,15 @@ def _validate_args(args) -> None:
 
     elif args.command == "node-exec":
         _validate_node_exec(args)
+
+    elif args.command == "host-exec":
+        _validate_node_exec(args)  # 复用同一套只读命令白名单（含 tcpdump 专用校验）
+
+    elif args.command == "host-log":
+        _pos_int(args.tail, "--tail")
+        if not args.any_path:
+            lib.validate_log_path(args.file)
+        _grep_context_args(args)
 
     elif args.command == "nsenter-net":
         _validate_nsenter_net(args)
@@ -568,6 +655,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scenario", default="node", choices=sorted(_SCENARIO_COMMANDS))
     p.add_argument("node")
     p.add_argument("node_command", nargs=argparse.REMAINDER, metavar="command")
+
+    # Arbitrary-host channels via direct-tcpip tunnel (password auth allowed).
+    # NOTE: positional must NOT be named "command" (collides with subparser dest).
+    p = sub.add_parser("host-exec")
+    p.add_argument("--scenario", default="node", choices=sorted(_SCENARIO_COMMANDS))
+    p.add_argument("host")
+    p.add_argument("host_command", nargs=argparse.REMAINDER, metavar="command")
+
+    p = sub.add_parser("host-log")
+    p.add_argument("host")
+    p.add_argument("file")
+    p.add_argument("--any-path", action="store_true")
+    p.add_argument("--tail", default="500")
+    _add_grep_flags(p)
 
     p = sub.add_parser("nsenter-net")
     p.add_argument("node")
@@ -802,6 +903,39 @@ def cmd_node_exec(args) -> None:
         sys.exit(1)
 
 
+def cmd_host_exec(args) -> None:
+    out = lib.execute_on_host(args.host, *args.host_command, capture=True)
+    print(f"=== host {args.host} exec(scenario={args.scenario}): "
+          f"{' '.join(args.host_command)} ===")
+    print("\n".join(_tail((out.stdout or "").splitlines(), OUTPUT_LIMIT)))
+    stderr = (out.stderr or "").strip()
+    if stderr:
+        sys.stderr.write(stderr + "\n")
+    if (out.returncode or 0) != 0:
+        sys.exit(1)
+
+
+def cmd_host_log(args) -> None:
+    host = args.host
+    if args.any_path:
+        sys.stderr.write(
+            f"warn: --any-path 已启用，跳过扫描目录集校验"
+            f"（路径由问题线索驱动，请确认可信）: {args.file}\n")
+        real = args.file
+    else:
+        result = lib.execute_on_host(host, "readlink", "-f", args.file,
+                                     capture=True, check=False)
+        real = (result.stdout or "").strip() if result else ""
+        if not real:
+            lib.die(f"无法解析 host {host} 路径 {args.file}")
+        lib.validate_log_path(real)
+    print(f"=== host {host}:{real} (tail={args.tail} grep={args.grep or 'none'}) ===")
+    out = lib.execute_on_host(host, "tail", "-n", args.tail, real, capture=True)
+    _die_on_fail(out, f"host 上 tail {real}")
+    lines = _render_grep((out.stdout or "").splitlines(), args)
+    print("\n".join(_tail(lines, OUTPUT_LIMIT)))
+
+
 def cmd_nsenter_net(args) -> None:
     node_ip = lib.resolve_node_ip(args.node)
     print(f"=== node {args.node}({node_ip}) nsenter -t {args.pid} -n "
@@ -841,6 +975,8 @@ _DISPATCH = {
     "node-exec": cmd_node_exec,
     "nsenter-net": cmd_nsenter_net,
     "pause-pid": cmd_pause_pid,
+    "host-exec": cmd_host_exec,
+    "host-log": cmd_host_log,
 }
 
 

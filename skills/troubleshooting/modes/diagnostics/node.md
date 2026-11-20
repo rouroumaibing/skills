@@ -20,6 +20,8 @@
 - `logs.py node-find <node> --name "*.log" --newer 2h`：节点日志文件索引（扫描目录集内）
 - `logs.py node-exec --scenario node <node> <command>`：白名单只读命令（df/free/vmstat/uptime/top/dmesg/pidstat/ps）
 - `logs.py hop-check <node>`：先确认跳板机到节点免密可用
+- **节点通道不依赖 kubectl**：`<node>` 可直接传节点 IP（跳过名字解析）；或在 `config.conn.node_ips` 配 `节点名->IP` 映射。只有按**名字**解析且无映射时才需要跳板机上的 kubectl。kubectl 不可用时上述节点命令照常工作。
+- **非集群机器**（DB/网关/负载均衡等不在 K8s 里的机器）：用 `logs.py host-exec <host> <命令>` / `logs.py host-log <host> <文件>`，经跳板机 direct-tcpip 隧道直连，凭据在 `config.conn.host_credentials.<host>`（支持密码）。host 通道复用同样的只读命令白名单。
 
 ## 最小充分集（节点类问题下结论前必看）
 1. `logs.py describe-node <node>`（Conditions + Events）
