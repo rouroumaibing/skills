@@ -1,25 +1,19 @@
-# 本文件是提交到库的案例模板；真实连接信息写到同目录的 config.yaml（不入库）。
-# 跳板机本身仍走 SSH 公钥免密（setup_ssh.py local）；conn.host_credentials 才允许写密码，
-# 用于「跳板机→任意机器」的直连隧道，只放本地 config.yaml，切勿提交。
+# 提交到库的案例模板；真实连接信息写到同目录的 config.yaml（不入库，权限 600）。
+# conn 地址：public-ip 与 private-ip 至少一个必填；配了 public-ip 就优先走公网。
+# 密码只写本地 config.yaml，按敏感数据对待，切勿提交。
 conn:
-  public-ip: xx.xx.xx.xx        # 跳板机公网地址；配了就优先走公网（配公网即代表本机不能直连私网）
-  public-port: xx               # 公网地址的 ssh 端口（缺省 22，只作用于公网链路）
-  private-ip: xx.xx.xx.xx       # 跳板机私网地址；纯内网环境可不配 public-ip，或把 public-ip 也填成该内网地址
-  # public-ip 与 private-ip 至少一个必填。
-  # node_ips:                    # 可选：节点名 -> IP 静态映射；kubectl 不可用/未安装时节点通道靠它解析
-  #   node-1: 10.0.0.11
-  #   node-2: 10.0.0.12
-  # host_credentials:            # 可选：「跳板机→任意机器」的密码隧道凭据（仅本地 config.yaml，明文，勿提交）
-  #   db-host:                   # host 标识，对应 host-exec/host-log 的 <host> 参数
-  #     user: dba
-  #     password: xxxx           # 明文密码；经跳板机 direct-tcpip 隧道在本机完成 SSH 认证
-  #     port: 22                 # 目标机 ssh 端口
+  public-ip: xx.xx.xx.xx        # 跳板机公网地址；配了即优先走公网（代表本机不能直连私网）
+  public-port: 22               # 公网地址的 ssh 端口（只作用于公网链路；私网固定 22）
+  private-ip: xx.xx.xx.xx       # 跳板机私网地址；纯内网可把 public-ip 也填成该内网地址
+  sshpassword:                  # host 通道连非集群机器的共享密码列表，按顺序逐个尝试
+    - '密码1'
+    - '密码2'
 
 codehub:                        # 本地代码库：组件别名 -> 本地仓库路径（查最新代码用）
-  components-1: D:\xxx\         
-  components-2: ~/work/xxx
+  components-1: ~/work/xxx
+  components-2: ~/work/yyy
 
 worktree:
-  workdir: xx/                  # 客户报版本时，只读 worktree 的工作目录
+  workdir: ~/work/worktree      # 客户报版本时，只读 worktree 的工作目录
 
-troubleshooting-knowledge: d:/skills/troubleshooting-knowledge   # 知识库 skill 目录（河道取水：定位问题时自动扫描其 knowledge/，不写死文件名；跨平台路径，按 config 既有 expand 规则展开）
+troubleshooting-knowledge: ~/skills/troubleshooting-knowledge   # 知识库 skill 目录（可选；河道取水，按 expand 规则展开路径）

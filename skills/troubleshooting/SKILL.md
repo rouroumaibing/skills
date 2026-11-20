@@ -13,7 +13,7 @@ metadata:
 ## 依赖与初始化
 
 - **依赖**：`python3`（≥3.8）、`PyYAML`、`paramiko`、`git`。跳板机上的 `kubectl` **可选**（仅 pods/logs/events 与按节点名解析需要；节点通道可传 IP 或配 `conn.node_ips` 映射绕过，host 通道走直连隧道，均不需 kubectl）。SSH 传输用 Paramiko（纯 Python，不依赖本机 OpenSSH，因此没有 Windows `ControlMaster`/`ControlPath` 的 `getsockname failed` 问题）；节点跳转仍在跳板机上用 `ssh`。排查脚本均为只读 Python（配置用 PyYAML 解析）；**运行期唯一写操作入口是 `scripts/apply.py`**（白名单 + 授权分层 + 强制先备份），复验用 `scripts/verify.py`（PASS/FAIL）。
-- **首次配置**：编辑 `config.yaml` 填入 `conn`（跳板机地址：`public-ip` 与 `private-ip` 至少一个；**配了公网就优先走公网**，纯内网可不配公网或把它填成同一内网地址；SSH 用户默认 `root`）、`codehub`（组件→本地仓库路径，map 形式可带 `aliases`/`selector`）、`worktree.workdir`（版本 worktree 目录）。可选覆盖键：`conn.user` / `conn.namespace` / `conn.context` / `conn.scan_dirs`（详见 per-skill README）。**跳板机认证不写密码/密钥**，走公钥免密（见下 `setup_ssh.py`）；**只有**连非集群机器的 host 通道允许在 `conn.host_credentials.<host>` 写明文密码——该文件不入库（仓库只提交 `config.yaml.example` 模板），权限建议 600。**首次免密用 `scripts/setup_ssh.py`**：`local`（本机→跳板机）/ `bastion`（跳板机→节点）/ `status`（体检），另有 `export-bundle` / `import-bundle` 用于免密凭据的分发与导入，幂等可重复运行；两类密钥的分发与防覆盖策略见同目录 `README.md` 第 3 节。注意：`setup_ssh.py` 是**配置期**的写工具（由运维人员手动运行，排查过程不要调用它）；**运行期**唯一写操作入口是 `scripts/apply.py`（修复场景，受写命令白名单 / T1/T2R/T2U/T3 授权分层 / 强制先备份三重约束，详见下方「安全红线」）。
+- **首次配置**：编辑 `config.yaml` 填入 `conn`（跳板机地址：`public-ip` 与 `private-ip` 至少一个；**配了公网就优先走公网**，纯内网可不配公网或把它填成同一内网地址；SSH 用户默认 `root`）、`codehub`（组件→本地仓库路径，map 形式可带 `aliases`/`selector`）、`worktree.workdir`（版本 worktree 目录）。可选覆盖键：`conn.user` / `conn.namespace` / `conn.context` / `conn.scan_dirs`（详见 per-skill README）。**跳板机认证不写密码/密钥**，走公钥免密（见下 `setup_ssh.py`）；**只有**连非集群机器的 host 通道允许在 `conn.sshpassword`（共享密码列表，按顺序逐个尝试）写明文密码——该文件不入库（仓库只提交 `config.yaml.example` 模板），权限建议 600；特定机器需定制 user/port 时再用 `conn.host_credentials.<host>` 覆盖。**首次免密用 `scripts/setup_ssh.py`**：`local`（本机→跳板机）/ `bastion`（跳板机→节点）/ `status`（体检），另有 `export-bundle` / `import-bundle` 用于免密凭据的分发与导入，幂等可重复运行；两类密钥的分发与防覆盖策略见同目录 `README.md` 第 3 节。注意：`setup_ssh.py` 是**配置期**的写工具（由运维人员手动运行，排查过程不要调用它）；**运行期**唯一写操作入口是 `scripts/apply.py`（修复场景，受写命令白名单 / T1/T2R/T2U/T3 授权分层 / 强制先备份三重约束，详见下方「安全红线」）。
 - **环境访问只通过 `scripts/`**：Agent 不得直接执行 `ssh` / `kubectl`；脚本内部已是「连跳板机 → 在跳板机上执行 kubectl / 经跳板机 hop 到节点」，连接信息只来自 `config.conn`，Agent 不得自己拼接 IP 或主机名。**写操作只经 `scripts/apply.py`**（kubectl / node / db 三通道），复验只经 `scripts/verify.py`。详见下方「安全红线」。
 
 ## 场景路由
@@ -25,7 +25,7 @@ metadata:
 | 客户反馈了问题，只有报错/版本，连不上客户环境 | modes/customer-issue.md |
 | 用户问「某行为在运行时**会不会发生 / 是否会被… / 确认…**」等**行为确认型**问题 | 默认走 modes/env-debug.md **上环境证伪**并套用 `templates/behavior-confirmation.md` 出报告；**代码级确认作为可选并行旁证**：组件源码可达（codehub/upstream）即分析佐证，不可达则跳过，非 fallback |
 
-**专门通道速查**（主入口只做指路，命令与参数在 mode 内）：集群 pod/节点/网络问题走 env-debug.md → 对应 `modes/diagnostics/<场景>.md`；目标机器**不在 K8s 内**（网关/DB/负载均衡）用 `logs.py host-exec` / `host-log` 经跳板机 direct-tcpip 隧道直连，凭据在 `conn.host_credentials.<host>`，详见 node.md「非集群机器」；网络问题 ping/traceroute 只给通断、需定位**哪一跳丢包**时用节点或 host 上的 `tcpdump` 抓包对照（强制只读约束），详见 network.md「抓包定位丢包点」。这些都是只读诊断，命令同样受白名单约束。
+**专门通道速查**（主入口只做指路，命令与参数在 mode 内）：集群 pod/节点/网络问题走 env-debug.md → 对应 `modes/diagnostics/<场景>.md`；目标机器**不在 K8s 内**（网关/DB/负载均衡）用 `logs.py host-exec` / `host-log` 经跳板机 direct-tcpip 隧道直连，凭据在 `conn.sshpassword`（共享密码列表）或 `conn.host_credentials.<host>`（按机器覆盖），详见 node.md「非集群机器」；网络问题 ping/traceroute 只给通断、需定位**哪一跳丢包**时用节点或 host 上的 `tcpdump` 抓包对照（强制只读约束），详见 network.md「抓包定位丢包点」。这些都是只读诊断，命令同样受白名单约束。
 
 场景不明确时，用一句话向用户确认，不要猜。
 场景③中**严禁**尝试连接任何环境。
@@ -66,7 +66,7 @@ metadata:
 - 不得读取 `~/.ssh/` 下的任何内容。
 - 状态码为 `NEEDS_MANUAL_AUTH`、`HOP_FAIL` 时：**只提示用户在自己终端手动执行对应命令，然后等待**，不得自行重试绕过。
 - 节点日志（`node-log` / `node-journal`）依赖跳板机对节点的免密；若 `HOP_FAIL`，只提示用户在跳板机侧配置对该节点的免密（`ssh root@<node>`），Agent 不自行处理密钥分发。节点命令的 `<node>` 可直接传 IP 或走 `conn.node_ips` 映射，无需 kubectl 解析。
-- **host 通道**（`logs.py host-exec` / `host-log`）：经跳板机 direct-tcpip 隧道在本机与任意非集群机器建立端到端 SSH，凭据只来自 `config.conn.host_credentials.<host>`（支持明文密码，仅本地 config）。host 严格校验、命令走与 node-exec 相同的只读白名单（含 tcpdump 约束）；密码不回显、不进任何 status/日志。该通道是**只读诊断**，不接入 apply.py 写通道。
+- **host 通道**（`logs.py host-exec` / `host-log`）：经跳板机 direct-tcpip 隧道在本机与任意非集群机器建立端到端 SSH，凭据来自 `config.conn.sshpassword` 共享列表（按顺序逐个尝试）或 `config.conn.host_credentials.<host>` 按机器覆盖（支持明文密码，仅本地 config）。host 严格校验、命令走与 node-exec 相同的只读白名单（含 tcpdump 约束）；密码不回显、不进任何 status/日志。该通道是**只读诊断**，不接入 apply.py 写通道。
 - **本 skill 没有 production 确认门（protected）**：排查脚本只读，但跳板机/节点均以 `root` 登录，`root` 本身不构成只读边界。请只把它指向开发/测试跳板机；若必须连生产，调用前请自行确认（**连生产属 T2「显式确认后放行」，非 T3 禁止**）。节点日志路径若指向软链接，`root` 下 `tail` 会跟随链接读到目录外文件，脚本已在节点上 `readlink -f` 解析真实路径后重新校验扫描目录集；读取目录集外路径属显式越界（`--any-path`），请确认可信。
 - **写操作授权分层（T1/T2R/T2U/T3，通用框架，覆盖 kubectl / SSH(node) / DB 所有写通道；以「是否修改既有环境状态 / 可恢复性」为锚，非「是否写」）**：
   - **T1 非破坏性**（不修改既有状态：建自清理测试/对照资源（如 `kubectl create job`）、读 `get`/`logs`/代码检索、本地脚本、出报告）→ **默认放行**。
@@ -92,7 +92,7 @@ metadata:
 | NO_KNOWLEDGE_HIT | 知识库取水无命中（knowledge.py） | 属正常：跳过知识锚点，纯靠框架与运行时取证，不要编造已知事实 |
 | TOO_MANY_PODS | 匹配 pod 超过 20 个 | 用 `--pod <name>` 指定单个 pod，或 `-n <ns>` 收窄后再读日志 |
 | HOP_OK / HOP_FAIL | `hop-check`：跳板机到节点免密可用 / 未免密 | HOP_OK 继续；HOP_FAIL 提示用户在跳板机侧配置对该节点的免密 |
-| HOST_AUTH_FAIL / HOST_CONN_FAIL (host 通道) | 目标机认证被拒 / 隧道连接失败 | 核对 `conn.host_credentials.<host>` 的密码/user/port；密码不会回显，不要重试绕过 |
+| HOST_AUTH_FAIL / HOST_CONN_FAIL (host 通道) | 目标机认证被拒（所有密码试尽） / 隧道连接失败 | 核对 `conn.sshpassword` 列表是否含正确密码（逐个尝试），或 `conn.host_credentials.<host>` 的 user/port；密码不会回显，不要重试绕过 |
 | NOT_FOUND | 该组件无此版本 tag | 展示 nearby，**请用户确认**，不得自行替换版本 |
 | AMBIGUOUS_COMPONENT / AMBIGUOUS_TAG | 组件名 / 版本 tag 匹配到多个候选 | 展示候选，请用户决定，不自行选 |
 | NO_LOCAL_REPO | codehub 里该组件路径不存在或不是 git 仓库 | 确认 config.codehub 的本地路径，仓库需已 clone 到该路径 |

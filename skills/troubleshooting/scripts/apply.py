@@ -60,7 +60,6 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib
 
-CHANNELS = ("kubectl", "node", "db")
 DEFAULT_BACKUP_DIR = "~/.cache/troubleshooting-backup"
 SNAPSHOT_OUTPUT_LIMIT = 300   # node/db 快照最多存盘行数（超出截断并标注）
 SLUG_MAX = 60
@@ -133,10 +132,6 @@ def _v_annotate(v: str) -> bool:
     if not sep or not re.fullmatch(r"[A-Za-z0-9./_-]+", key):
         return False
     return val == "" or bool(re.fullmatch(r"[A-Za-z0-9./_:+@ -]+", val))
-
-
-def _v_safe(v: str) -> bool:
-    return bool(_SAFE_VAL_RE.fullmatch(v))
 
 
 # config 自定义 flag 的取值模式：布尔开关（--flag）或 --flag=value 均可

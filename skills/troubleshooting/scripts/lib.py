@@ -32,8 +32,8 @@ Design notes
   _Result records wall-clock duration for evidence quality.
 * The module is intentionally read-only: it never mutates the cluster or nodes,
   only a small per-user cache under ~/.cache.
-* Time-related tunables (connect/probe/cache/request) live in config.conn and
-  fall back to safe defaults, so callers do not hard-code magic numbers.
+* Time-related tunables (connect/request) live in config.conn and fall back
+  to safe defaults, so callers do not hard-code magic numbers.
 * Node-side reads/searches are bounded by a scan directory set
   (config.conn.scan_dirs, defaulting to the common on-host log locations).
   Entry scripts that must read outside the set use an explicit escape hatch
@@ -85,8 +85,6 @@ CONFIG_PATH = os.path.join(ROOT_DIR, "config.yaml")
 
 # Safe defaults for the timeouts that config.conn may override.
 DEFAULT_CONNECT_TIMEOUT = 10   # ssh connect / banner / auth timeout (seconds)
-DEFAULT_PROBE_TIMEOUT = 5      # private-IP reachability probe (seconds)
-DEFAULT_CACHE_TTL = 300        # how long a resolved bastion host is cached (seconds)
 DEFAULT_REQUEST_TIMEOUT = 10    # kubectl --request-timeout (seconds)
 DEFAULT_KEEPALIVE = 30          # transport keepalive interval (seconds)
 DEFAULT_SSH_PORT = 22           # default SSH port when conn.public-port is unset
@@ -163,9 +161,9 @@ class Connection:
     """Resolved bastion connection plus the tunables read from config.conn."""
 
     def __init__(self, bastion_host, user, context, namespace,
-                 public_ip, private_ip, connect_timeout, probe_timeout,
-                 cache_ttl, request_timeout, public_port=None,
-                 node_ips=None, host_credentials=None):
+                 public_ip, private_ip, connect_timeout, request_timeout,
+                 public_port=None,
+                 node_ips=None, host_credentials=None, sshpassword=None):
         self.bastion_host = bastion_host
         self.user = user
         self.context = context
@@ -174,13 +172,13 @@ class Connection:
         self.private_ip = private_ip
         self.public_port = public_port  # ssh port of the PUBLIC path only
         self.connect_timeout = connect_timeout
-        self.probe_timeout = probe_timeout
-        self.cache_ttl = cache_ttl
         self.request_timeout = request_timeout
         # node name -> IP static map: lets node channels work without kubectl.
         self.node_ips = node_ips or {}
-        # host -> {user, password, port}: credentials for direct-tcpip tunnels.
+        # host -> {user, password, port}: per-host credentials for direct-tcpip tunnels.
         self.host_credentials = host_credentials or {}
+        # Shared password list for non-cluster hosts (tried in order).
+        self.sshpassword = list(sshpassword or [])
 
 
 def load_connection() -> Connection:
@@ -217,8 +215,6 @@ def load_connection() -> Connection:
     namespace = (conn_cfg.get("namespace") or "").strip()
     try:
         connect_timeout = int(conn_cfg.get("connect_timeout") or DEFAULT_CONNECT_TIMEOUT)
-        probe_timeout = int(conn_cfg.get("probe_timeout") or DEFAULT_PROBE_TIMEOUT)
-        cache_ttl = int(conn_cfg.get("cache_ttl") or DEFAULT_CACHE_TTL)
         request_timeout = int(conn_cfg.get("request_timeout") or DEFAULT_REQUEST_TIMEOUT)
     except (TypeError, ValueError) as exc:
         die(f"config.conn 的时间配置必须是数字: {exc}")
@@ -235,6 +231,22 @@ def load_connection() -> Connection:
                 node_ips[name] = ip
             else:
                 sys.stderr.write(f"warn: conn.node_ips 忽略非法条目 {name} -> {ip}\n")
+
+    # Shared passwords for the host channel: a list tried in order.  A single
+    # string is accepted as a one-element list for config convenience.  Values
+    # are kept opaque (never logged); non-scalar entries are ignored with a warning.
+    sshpassword = []
+    raw_pw = conn_cfg.get("sshpassword") or []
+    if isinstance(raw_pw, str):
+        raw_pw = [raw_pw]
+    if isinstance(raw_pw, list):
+        for pw in raw_pw:
+            if isinstance(pw, (str, int, float)) and str(pw) != "":
+                sshpassword.append(str(pw))
+            else:
+                sys.stderr.write("warn: conn.sshpassword 忽略非法条目\n")
+    else:
+        die("config.conn.sshpassword 必须是密码列表")
 
     host_credentials = {}
     raw_creds = conn_cfg.get("host_credentials") or {}
@@ -257,9 +269,10 @@ def load_connection() -> Connection:
 
     _connection = Connection(bastion_host, user, context, namespace,
                              public_ip, private_ip, connect_timeout,
-                             probe_timeout, cache_ttl, request_timeout,
-                             public_port=public_port, node_ips=node_ips,
-                             host_credentials=host_credentials)
+                             request_timeout, public_port=public_port,
+                             node_ips=node_ips,
+                             host_credentials=host_credentials,
+                             sshpassword=sshpassword)
     return _connection
 
 
@@ -537,11 +550,6 @@ def run_ssh(target: str, remote_command: str, *, timeout: int = DEFAULT_CONNECT_
                 return _Result(255)
 
 
-def _ssh_succeeds(target: str, *, timeout: int) -> bool:
-    result = run_ssh(target, "true", timeout=timeout, capture=True, check=False)
-    return result is not None and result.returncode == 0
-
-
 def bastion_target(conn: "Connection", host: str | None = None) -> str:
     """Assemble ``user@host[:port]`` for reaching the bastion.
 
@@ -636,6 +644,10 @@ def _tunnel_client(key: str, host: str, cred: dict, timeout: int) -> "paramiko.S
     auth and host-key verification) is established end-to-end from this machine.
     That is what lets us reach arbitrary non-cluster machines with a password,
     without needing an ``ssh`` binary or sshpass on the bastion.
+
+    ``cred['passwords']`` is a list tried in order; each attempt opens a fresh
+    direct-tcpip channel because a rejected auth socket cannot be reused.  On
+    total failure only the count is reported — passwords are never logged.
     """
     cached = _clients.get(key)
     if cached is not None:
@@ -649,55 +661,87 @@ def _tunnel_client(key: str, host: str, cred: dict, timeout: int) -> "paramiko.S
     if transport is None or not transport.is_active():
         raise _ConnFailure("跳板机 transport 不可用，无法开隧道")
     port = cred["port"]
-    try:
-        sock = transport.open_channel("direct-tcpip", (host, port), ("127.0.0.1", 0))
-    except Exception as exc:  # paramiko raises several channel errors here
-        raise _ConnFailure(f"开 direct-tcpip 隧道失败 {host}:{port}: {exc}")
+    passwords = cred.get("passwords") or []
+    # No password configured: fall back to key/agent auth (single attempt).
+    attempts = list(passwords) if passwords else [None]
+    last_auth_fail = False
+    for password in attempts:
+        try:
+            sock = transport.open_channel("direct-tcpip", (host, port), ("127.0.0.1", 0))
+        except Exception as exc:  # paramiko raises several channel errors here
+            raise _ConnFailure(f"开 direct-tcpip 隧道失败 {host}:{port}: {exc}")
 
-    client = make_ssh_client()
-    kwargs = {
-        "hostname": host, "port": port, "username": cred["user"],
-        "sock": sock, "timeout": timeout,
-        "banner_timeout": timeout + 10, "auth_timeout": timeout + 10,
+        client = make_ssh_client()
+        kwargs = {
+            "hostname": host, "port": port, "username": cred["user"],
+            "sock": sock, "timeout": timeout,
+            "banner_timeout": timeout + 10, "auth_timeout": timeout + 10,
+        }
+        if password is not None and password != "":
+            kwargs.update(password=password, allow_agent=False, look_for_keys=False)
+        else:
+            kwargs.update(allow_agent=True, look_for_keys=True)
+        try:
+            client.connect(**kwargs)
+        except paramiko.AuthenticationException:
+            _safe_close(client)
+            last_auth_fail = True
+            continue  # try the next password
+        except paramiko.BadHostKeyException as exc:
+            _safe_close(client)
+            raise _ConnFailure(f"目标机 {host} 主机密钥不匹配(疑被篡改): {exc}")
+        except (paramiko.SSHException, socket.timeout, OSError) as exc:
+            _safe_close(client)
+            raise _ConnFailure(f"隧道连接失败 {host}:{port}: {exc}")
+        tr = client.get_transport()
+        if tr is not None:
+            tr.set_keepalive(DEFAULT_KEEPALIVE)
+        _clients[key] = client
+        return client
+    if last_auth_fail:
+        raise _AuthFailure(f"目标机 {host} 认证被拒（已尝试 {len(attempts)} 个密码）")
+    raise _ConnFailure(f"目标机 {host} 无可用密码")
+
+
+def _host_credential(host: str) -> dict:
+    """Resolve credentials for a non-cluster host.
+
+    Per-host ``conn.host_credentials[host]`` wins (backward compatible, supports
+    distinct user/port/password); otherwise the shared ``conn.sshpassword`` list
+    is used with ``conn.user`` and port 22.  Returns a dict with keys
+    ``user``, ``port``, ``passwords`` (list, possibly empty for key auth).
+    """
+    if _connection is None:
+        die("load_connection() 未调用")
+    override = (_connection.host_credentials or {}).get(host)
+    if override is not None:
+        pw = override.get("password")
+        return {
+            "user": override["user"],
+            "port": override["port"],
+            "passwords": [pw] if pw else [],
+        }
+    return {
+        "user": _connection.user,
+        "port": DEFAULT_SSH_PORT,
+        "passwords": list(_connection.sshpassword or []),
     }
-    password = cred.get("password")
-    if password is not None and password != "":
-        kwargs.update(password=password, allow_agent=False, look_for_keys=False)
-    else:
-        kwargs.update(allow_agent=True, look_for_keys=True)
-    try:
-        client.connect(**kwargs)
-    except paramiko.AuthenticationException:
-        _safe_close(client)
-        raise _AuthFailure(f"目标机 {host} 认证被拒（检查 host_credentials 密码）")
-    except paramiko.BadHostKeyException as exc:
-        _safe_close(client)
-        raise _ConnFailure(f"目标机 {host} 主机密钥不匹配(疑被篡改): {exc}")
-    except (paramiko.SSHException, socket.timeout, OSError) as exc:
-        _safe_close(client)
-        raise _ConnFailure(f"隧道连接失败 {host}:{port}: {exc}")
-    tr = client.get_transport()
-    if tr is not None:
-        tr.set_keepalive(DEFAULT_KEEPALIVE)
-    _clients[key] = client
-    return client
 
 
 def execute_on_host(host: str, *command, timeout: int | None = None,
                     capture: bool = True, check: bool = True):
     """Run *command* on an arbitrary host through a direct-tcpip tunnel on the bastion.
 
-    Credentials come only from ``config.conn.host_credentials[host]``.  Passwords
-    are never printed: failures map to generic statuses.  Host is strictly
+    Credentials come from ``config.conn.host_credentials[host]`` (per-host
+    override) or the shared ``config.conn.sshpassword`` list.  Passwords are
+    never printed: failures map to generic statuses.  Host is strictly
     validated and shell-quoted so no command injection is possible.
     """
     if _connection is None:
         die("load_connection() 未调用")
     if not re.fullmatch(r"[A-Za-z0-9._-]+", host) or host.startswith("-"):
         die(f"host 不合法: {host}")
-    cred = (_connection.host_credentials or {}).get(host)
-    if cred is None:
-        die(f"host {host} 未配置凭据（config.conn.host_credentials.{host}）")
+    cred = _host_credential(host)
     timeout = timeout or _connection.connect_timeout
     key = f"tunnel:{cred['user']}@{host}:{cred['port']}"
     try:

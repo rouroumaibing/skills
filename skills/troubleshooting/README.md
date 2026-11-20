@@ -34,13 +34,14 @@
    - `conn.namespace` / `conn.context`：跳板机 kubectl 的 namespace / context，缺省用跳板机当前。注意：`logs.py` 的查询默认 `-A` 全 namespace 发现，`-n <ns>` 显式收窄优先，业务 pod 不在 default namespace 也**无需**再配 `namespace`。
    - `conn.scan_dirs`：节点日志**扫描目录集**（发现面默认开放、读取面按此收敛），缺省为 `/var/log`、`/var/log/pods`、`/var/log/containers`、`/data/logs`（`/var/lib/kubelet` 含节点 pki 私钥，刻意不进缺省集；确需读取再显式加入）。`node-log` 的读取路径与 `node-find` 的搜索范围都受此集约束；**集外路径确需读取时用 `node-log --any-path` 显式越界**（必回显告警，可审计）。收窄此集即可收紧边界；**敏感日志目录（secure / audit 等）请勿列入**，避免内容进入模型上下文。
    - `conn.node_ips`：节点名 -> IP 静态映射（可选）。kubectl 不可用/未安装时，节点通道靠它把节点名解析为 IP；也可直接在 `<node>` 传 IP 绕过解析。
-   - `conn.host_credentials`：连**非集群机器**的凭据（可选），`host -> {user, password, port}`。用于 `host-exec` / `host-log` 经跳板机 direct-tcpip 隧道直连任意机器，支持明文密码；**只写本地 config.yaml，该文件不入库**（仓库只提交 `config.yaml.example` 模板），建议权限 600。
+   - `conn.sshpassword`：连**非集群机器**的共享密码列表（可选），按顺序逐个尝试直到成功。用于 `host-exec` / `host-log` 经跳板机 direct-tcpip 隧道直连任意机器；user 取 `conn.user`（默认 root）、port 默认 22。**只写本地 config.yaml，该文件不入库**（仓库只提交 `config.yaml.example` 模板），建议权限 600。
+   - `conn.host_credentials`（高级覆盖，可选）：`host -> {user, password, port}`，为特定机器定制 user/port 或单密码；配置后**优先于**共享 `sshpassword`。多数场景只需 `sshpassword`，无需逐机配置。
    - `conn.connect_timeout` / `conn.request_timeout`：SSH 连接超时、kubectl `--request-timeout`（单位秒），默认 `10` / `10`。`probe_timeout` / `cache_ttl` 为历史兼容键，公网优先后不再使用，可忽略。
    - `remediation.backup_dir`：apply.py 写操作的备份目录（本地，自动创建，权限 700），缺省 `~/.cache/troubleshooting-backup`。
    - `remediation.shared_cluster`：缺省 `true`（fail-safe：按共享/近生产集群处理，T2R 写操作也需 `--confirm` 显式授权；**空值（`shared_cluster:`）与无法识别的值同样按 `true` 处理**）；**独占测试集群必须显式设 `false`** 才放宽为 T2R 先备份后执行。
    - `remediation.write_timeout`：apply.py 写命令/快照的远端执行读超时（秒），缺省 `180`。排查脚本的默认读超时是 `connect_timeout+5`（15s），对 `kubectl delete pod`（优雅等待 30s）这类长写命令会误报失败——写通道单独放大。
    - `remediation.write_whitelist`：可选，按通道（kubectl/node/db）**整体覆盖**内置写命令白名单（结构化声明条目，非正则；kubectl 条目 `{verb, kind, tier[, sub][, flags]}`、node 条目 `{cmd, tier[, subs]}`、db 条目 `{keyword, tier}`，字段语义见 `scripts/apply.py` 文件头 docstring）。kubectl 条目的 `verb` 与实际命令严格比对（登记 `{verb: delete}` 不会放行 patch/expose 等同形状命令）。T3 反模式（控制面 namespace 删除、`--all` 批量删除、`rm -r`、`DROP DATABASE`/GRANT/REVOKE 等）由脚本内置结构判断兜底拒绝，config 覆盖不影响。
-3. **跳板机不写密码**，认证靠 SSH 公钥免密，用 `scripts/setup_ssh.py` 一键配置（**幂等，可重复运行**；传输用 Paramiko，无需本机 OpenSSH / `~/.ssh/config`）。**例外**：仅 host 通道连非集群机器时，在 `conn.host_credentials.<host>` 写明文密码（该文件不入库）：
+3. **跳板机不写密码**，认证靠 SSH 公钥免密，用 `scripts/setup_ssh.py` 一键配置（**幂等，可重复运行**；传输用 Paramiko，无需本机 OpenSSH / `~/.ssh/config`）。**例外**：仅 host 通道连非集群机器时，在 `conn.sshpassword` 写共享密码列表（该文件不入库）：
    - `python3 scripts/setup_ssh.py local`：本机 → 跳板机。生成个人密钥（若无，cryptography 生成 OpenSSH 格式）、把公钥**追加**到跳板机 `authorized_keys`。首次可能需输入一次跳板机密码（仅交互终端）。
    - `python3 scripts/setup_ssh.py bastion`：跳板机 → 节点。在跳板机上确保共用密钥存在，并把其公钥**追加**到各节点（缺省用 `kubectl` 自动发现，或 `--nodes <ip...>` 指定）。
    - `python3 scripts/setup_ssh.py status`：体检当前免密状态（本机密钥 / 到跳板机 / 到节点）。
@@ -114,7 +115,7 @@ ssh root@<节点IP> true                             # 验证免密
 - **pause-pid**：运行时→工具的选择在脚本内以 Python 变量完成（paramiko 每次 `execute_on_node` 都是全新 shell，远端环境变量无法跨调用存活，shell 组合命令会绕过 allow-list）；多个 pause 容器用 `--name`/`--namespace` 收窄；手动回退链见 network.md。
 - **地址选择**：公网优先。配 `public-ip` 就直接用（不探测私网、不缓存），未配才用 `private-ip`——不存在「私网探测缓存被伪造」的旧风险面。`public-ip` / `private-ip` 是唯一可信来源，Agent 不得自行拼接地址。
 - **known_hosts**：读取用户 `~/.ssh/known_hosts`（只读、逐行容错，坏行与 `@cert-authority`/`@revoked` 标记行跳过并告警，其余照常生效——paramiko 原生 load 在首个坏行中止，会静默丢失其后条目）；AutoAdd 新增密钥只落盘到 skill 专用 `~/.cache/troubleshooting/known_hosts`（0600），用户真实文件永不重写（paramiko 重写会丢注释/空行且无法回写 CA 行），解析失败降级为告警不崩溃。CA 行被跳过意味着 `@cert-authority` 信任不生效，依赖 CA 签发主机密钥的环境需另行评估。
-- **host 通道** `host-exec` / `host-log`：经跳板机 direct-tcpip 隧道在本机与任意非集群机器建立端到端 SSH，凭据只来自 `conn.host_credentials.<host>`（明文密码，仅本地 config，不回显、不进日志）；host 名严格校验，命令复用 node-exec 白名单，只读、不接 apply.py 写通道。明文密码靠「不入库 + 文件权限」保密，按敏感数据对待。
+- **host 通道** `host-exec` / `host-log`：经跳板机 direct-tcpip 隧道在本机与任意非集群机器建立端到端 SSH，凭据来自 `conn.sshpassword` 共享列表（按顺序逐个尝试），或 `conn.host_credentials.<host>` 的按机器覆盖（明文密码，仅本地 config，不回显、不进日志）；host 名严格校验，命令复用 node-exec 白名单，只读、不接 apply.py 写通道。明文密码靠「不入库 + 文件权限」保密，按敏感数据对待。
 - **tcpdump**（network 场景白名单）：必须带 `-c <count>`（上限 200），禁 `-w`/`-C`/`-W` 写盘与 `-Z` 切权限，只输出 stdout；过滤表达式按 bare token 放行，复杂过滤分多次按 host/port 收窄。判读步骤见 `modes/diagnostics/network.md`。
 
 ## 6. 验收
