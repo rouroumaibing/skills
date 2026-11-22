@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report hardcoded-value candidates in delivered test code.
 
-Eight-item reconciliation ("八对账") includes 写死值清零: literal values copied
+Nine-item reconciliation ("九对账") includes 写死值清零: literal values copied
 from exploration transcripts (real tokens, order ids, sample response values,
 environment addresses / URLs / hostnames) must not survive into delivered
 code — they break the moment the environment or the data rotates. This
