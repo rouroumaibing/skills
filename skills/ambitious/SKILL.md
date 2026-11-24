@@ -1,9 +1,9 @@
 ---
 name: ambitious
-description: "触发词：更有野心、把任务想高/想深/想宽、目标抬升、深度改写、外部验证、/ambitious。按 Felix Rieseberg「高度·深度·广度」三维度把普通任务改写成更有野心的版本：先出方案、列明工具与外部验证方式、等用户确认再动手；适用于值得做好的复杂任务，小活用处不大；手动 /ambitious 调用，重任务专用。| Rewrite an ordinary task into a more ambitious version along Felix Rieseberg's altitude/depth/breadth axes: propose a plan with concrete tools and external-verification, wait for user confirmation before executing; for tasks worth doing well, not trivial one-offs. Manual `/ambitious` invocation; for heavy tasks only. @ambitious"
+description: "触发词：更有野心、把任务想高/想深/想宽、目标抬升、深度改写、外部验证、/ambitious。按 Felix Rieseberg「高度·深度·广度」三维度把普通任务改写成更有野心的版本：先出方案、列明工具与外部验证方式、等用户确认再动手；适用于值得做好的复杂任务，小活用处不大；手动 /ambitious 调用，重任务专用。@ambitious"
 metadata:
   agent_created: true
-  version: "1"
+  version: "2"
 # 刻意不使用 Claude 专属运行时字段（argument-hint / disable-model-invocation），
 # 以保持 skill 跨运行时可移植；手动触发防护改由 description 与正文「何时不用」承担。
 ---

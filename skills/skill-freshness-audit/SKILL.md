@@ -1,9 +1,9 @@
 ---
 name: skill-freshness-audit
-description: "触发词：审计skill库、检查skill是否过时、skill保质期、哪些skill冗余、skill特有性检查、生成skill审计清单、模型升级后复查skill、清理/精简过时的skill。Audit the skill library for staleness, redundancy, and factual rot — classify each skill as 0→1 private knowledge (persist), 1→100 process-compensation (sunset candidate), or governance boundary (never remove), and flag stale content with traceable line-number evidence. Run it before a major model upgrade or when pruning a skill collection. ADVISORY ONLY: never auto-edit, delete, or disable any skill."
+description: "触发词：审计skill库、检查skill是否过时、skill保质期、哪些skill冗余、skill特有性检查、生成skill审计清单、模型升级后复查skill、清理/精简过时的skill。审计 skill 库的新鲜度、冗余与事实性过期：按 0→1 私有知识（persist）、1→100 流程代偿（sunset 候选）、治理边界（never-remove）分类，附可追溯行号证据；大版本模型升级前或清理 skill 库时使用；只报不改，绝不自动修改/删除/下线任何 skill。"
 metadata:
   agent_created: true
-  version: "5"
+  version: "6"
 ---
 
 # Skill 库 Freshness 审计（特有性 / 过期检查，建议型 / Advisory）

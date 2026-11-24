@@ -1,9 +1,9 @@
 ---
 name: automation-task-execution
-description: "触发词：自动化任务、生成自动化代码、把手工用例转成自动化、接口自动化、UI 测试自动化、E2E 脚本、用例代码化、冒烟跑通一个用例、探索性执行、缺口分析、流程缺什么信息、质量门、代码纪律、交付质量。本 skill 给出「AI 辅助自动化任务」的执行协议：缺口分析（不运行就把缺口按谁能补分成四类：AI 自取 / 人提供 / 运行时探针 / 可默认假设）→ 真实探索（先跑真实请求、不写自动化代码）→ 执行方案 → 冒烟跑通一个最简用例 → 批量实现 → 经验沉淀，并配失败分类与授权边界（哪些自己修、哪些必须先问人）、断言强度守恒（跑通 ≠ 正确）、上下文文件条目格式与定期复核。交付前按九对账逐项对账（第九项为质量门对账：按被测代码位置分治、三级降级，细则见 references/code-discipline.md）。适用于把手工用例 / 接口文档 / 后端代码转成可维护的自动化用例；对纯代码编写 / 部署脚本类请求走「轻量档」（见适用判定：跳过缺口分析与 md 协议文档，用编译 / 单测 / dry-run 做闭环），不要铺全套协议文档。| Execution protocol for AI-assisted automation tasks: gap analysis (route each gap by who can fill it: AI fetches / human provides / runtime probe / safe default) → real exploration first → execution plan → smoke one case → batch implementation → knowledge capture, with failure triage, authorization boundaries, and assertion-strength conservation; closes with a nine-item reconciliation whose quality-gate item is scoped by where the code under test lives, with a three-level tool fallback (see references/code-discipline.md)."
+description: "触发词：自动化任务、生成自动化代码、把手工用例转成自动化、接口自动化、UI 测试自动化、E2E 脚本、用例代码化、冒烟跑通一个用例、探索性执行、缺口分析、流程缺什么信息、质量门、代码纪律、交付质量。AI 辅助自动化任务执行协议：缺口分析（按谁能补分流，B 类一轮集中提问）→ 真实探索 → 执行方案 → 冒烟跑通一个最简用例 → 批量实现 → 经验沉淀；配失败分类与授权边界（哪些自己修、哪些先问人）、断言强度守恒（跑通 ≠ 正确），交付前按九对账逐项对账；纯代码编写/部署脚本类走轻量档，不铺全套协议文档。"
 metadata:
   agent_created: true
-  version: "14"
+  version: "15"
 ---
 
 # Automation Task Execution — AI 辅助自动化任务执行协议

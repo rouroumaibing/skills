@@ -4,15 +4,22 @@
 设计要点（河道与河流）
 --------------------
 * 河道只通过本脚本「扫描 / 检索」知识库，**绝不写、绝不改** knowledge/ 下任何文件；
+* **唯一检索入口**：打分 / 排序 / 词边界防护 / 命中遥测全部收口在知识库 skill 的
+  `scripts/search.py` CLI（集成契约，见 troubleshooting-knowledge 的
+  `references/consumer-contract.md`）。本脚本只做**薄委托**：解析 config 拿知识库根
+  → subprocess 调 search.py → 解析其稳定输出行 → 读正文打印。**禁止在消费侧复刻
+  打分实现**（2026-11-24 实测：复刻版缺短 ASCII 词边界防护已漂移，且绕过命中遥测）；
 * **不写死读哪个文件**：路由完全由查询向量驱动，新增 / 删除知识条目无需改本脚本；
 * 条目按 scope 分两层：`knowledge/oss/`（开源通用，可分发）与 `knowledge/personal/`
   （个人项目私有）——递归扫描两层都覆盖，`--scope` 可过滤；
 * 默认只取水 active 条目；命中按「分数降序 → confidence 优先级（verified >
   observed-once > doc-sourced）」排序，取 top N（预算防上下文撑爆；条目较长时
   配合知识层的 scripts/read_entry.py 按节读取）；
+* 命中遥测：search.py CLI 检索自动落盘到知识库根 `.usage-log.jsonl`——**取水即被
+  记录**，「复核按命中触发」的数据来源；
 * 知识库位置来自 troubleshooting 的 config.yaml 的 `troubleshooting-knowledge`
-  （跨平台路径，复用 lib.expand_path）；若指向知识库 skill 根目录则取其下的
-  `knowledge/`，若已直接指向 `knowledge/` 目录本身则直接用；
+  （跨平台路径，复用 lib.expand_path）；须指向知识库 **skill 根**（或其 knowledge/
+  目录），且根下须有 `scripts/search.py`——集成契约的物理载体；
 * index.yaml 机制已移除（2026-11-04）：条目量小、全量递归扫描即足够，且
   「索引与全扫合并」存在已删除文件仍可命中的隐患。
 """
@@ -22,6 +29,7 @@ import os
 import re
 import sys
 import argparse
+import subprocess
 
 try:
     import yaml  # noqa: F401  # 前置依赖：缺失时给出明确安装提示，而非误导性的解析告警
@@ -33,11 +41,9 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lib  # noqa: E402
 
-# 参与匹配的 frontmatter 字段（topics 为旧 schema 兼容保留）
-MATCH_FIELDS = ("domain", "components", "symptoms", "error_codes",
-                "versions", "aliases", "envs", "topics")
-CONF_RANK = {"verified": 0, "observed-once": 1, "doc-sourced": 2}
-CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+# search.py CLI 命中行格式（集成契约，变更须同步契约冒烟测试）：
+#   score=<int> hit=<fm|body|fm+body|2gram> scope=<s> conf=<c> status=<s> <rel>
+HIT_LINE_RE = re.compile(r"^score=(\d+) hit=\S+ scope=\S* conf=\S+ status=\S+ (\S+)$")
 
 
 def die(reason: str) -> None:
@@ -79,7 +85,10 @@ def parse_frontmatter(path: str) -> dict:
 
 
 def collect_candidates(knowledge_dir: str) -> dict:
-    """全量递归扫描（含 oss/ 与 personal/ 子目录），返回 {path: frontmatter}。"""
+    """全量递归扫描（含 oss/ 与 personal/ 子目录），返回 {path: frontmatter}。
+
+    仅 --list 使用（列表非检索，不涉打分契约）。
+    """
     seen: dict[str, dict] = {}
     for root, _dirs, files in os.walk(knowledge_dir):
         for fn in sorted(files):
@@ -90,51 +99,39 @@ def collect_candidates(knowledge_dir: str) -> dict:
     return seen
 
 
-def _cjk_bigrams(term: str) -> list[str]:
-    """含中文的查询词取 2-gram（中文自然语句整词匹配不上时的回退）。"""
-    if not CJK_RE.search(term) or len(term) < 2:
-        return []
-    return list({term[i:i + 2] for i in range(len(term) - 1)})
+def search_via_cli(knowledge_dir: str, terms: list[str], args) -> list[tuple[int, str]]:
+    """薄委托知识库 skill 的 search.py CLI（唯一检索入口）。
 
-
-def score_entry(path: str, fm: dict, haystack: list[str]) -> tuple[int, str]:
-    """按 frontmatter 语义字段 + 正文匹配查询向量（大小写不敏感）；返回 (score, body)。
-
-    打分：整词命中 fm +3 / 正文 +1；中文查询词整词未命中时按 2-gram 重合度回退，
-    权重低于整词（fm +2 / 正文 +1，且需 ≥2 个 gram 命中才计分）。
+    返回 [(score, 绝对路径)]，顺序即 CLI 排序结果（分数降序 → confidence → 路径）。
+    打分 / 防护 / 遥测随 CLI 演进，本函数不复刻任何匹配语义。
     """
-    parts: list[str] = []
-    for k in MATCH_FIELDS:
-        v = fm.get(k)
-        if isinstance(v, list):
-            parts.extend(str(x) for x in v)
-        elif v:
-            parts.append(str(v))
-    fm_text = " ".join(parts).lower()
-    try:
-        body = open(path, encoding="utf-8").read()
-    except OSError:
-        body = ""
-    body_lower = body.lower()
-    score = 0
-    for q in haystack:
-        ql = q.lower()
-        fm_hit = ql in fm_text
-        body_hit = ql in body_lower
-        if fm_hit:
-            score += 3
-        if body_hit:
-            score += 1
-        if not fm_hit and not body_hit:
-            grams = _cjk_bigrams(ql)
-            if grams:
-                hits_fm = sum(1 for g in grams if g in fm_text)
-                hits_body = sum(1 for g in grams if g in body_lower)
-                if hits_fm >= 2:
-                    score += 2
-                if hits_body >= 2:
-                    score += 1
-    return score, body
+    root = os.path.dirname(knowledge_dir)
+    search_py = os.path.join(root, "scripts", "search.py")
+    if not os.path.isfile(search_py):
+        die(f"知识库 skill 缺少 scripts/search.py（集成契约要求唯一检索入口）: {search_py}"
+            "——请更新 troubleshooting-knowledge")
+    cmd = [sys.executable, search_py, *terms,
+           "--root", root, "--top", str(max(1, args.top))]
+    if args.scope:
+        cmd += ["--scope", args.scope]
+    if args.include_inactive:
+        cmd += ["--include-inactive"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        die(f"search.py 检索失败（exit {proc.returncode}）——知识库 skill 环境异常")
+    hits: list[tuple[int, str]] = []
+    for line in proc.stdout.splitlines():
+        m = HIT_LINE_RE.match(line.strip())
+        if not m:
+            continue
+        path = os.path.normpath(os.path.join(
+            knowledge_dir, m.group(2).replace("\\", "/")))
+        hits.append((int(m.group(1)), path))
+    if not hits and not proc.stdout.lstrip().startswith("status=NO_KNOWLEDGE_HIT"):
+        die("search.py 输出不符合集成契约（既无命中行也无 NO_KNOWLEDGE_HIT）"
+            "——两侧 skill 版本可能不匹配，请更新 troubleshooting-knowledge")
+    return hits
 
 
 def main() -> None:
@@ -155,8 +152,8 @@ def main() -> None:
     knowledge_dir = find_knowledge_dir()
 
     def usable(fm: dict) -> bool:
-        """默认只消费 active 条目（deprecated/disputed 不取水），--include-inactive 放开；
-        --scope 过滤层级（oss/personal），不指定则两层都取。"""
+        """--list 的过滤（检索路径的过滤由 search.py CLI 负责）：
+        默认只列 active 条目，--include-inactive 放开；--scope 过滤层级。"""
         if not args.include_inactive and str(fm.get("status", "active")).lower() != "active":
             return False
         if args.scope and str(fm.get("scope", "")).lower() != args.scope:
@@ -177,28 +174,23 @@ def main() -> None:
     if not haystack:
         die("未提供任何查询（--query/--component/--error/--version 至少给一个，或 --list）")
 
-    ranked = []
-    for path, fm in collect_candidates(knowledge_dir).items():
-        if not usable(fm):
-            continue
-        score, body = score_entry(path, fm, haystack)
-        if score > 0:
-            conf = str(fm.get("confidence", "")).lower()
-            ranked.append((score, CONF_RANK.get(conf, 3), path, body))
-    # 排序：分数降序 → confidence 优先级（verified > observed-once > doc-sourced）→ 路径
-    ranked.sort(key=lambda x: (-x[0], x[1], x[2]))
+    hits = search_via_cli(knowledge_dir, haystack, args)
 
-    if not ranked:
+    if not hits:
         print("status=NO_KNOWLEDGE_HIT query=%s" % " ".join(haystack))
         return
 
-    for score, _cr, path, body in ranked[: max(1, args.top)]:
+    for score, path in hits:
         if args.path_only:
             print(path)
-        else:
-            print(f"# === {path} (score={score}) ===")
-            print(body)
-            print()
+            continue
+        try:
+            body = open(path, encoding="utf-8").read()
+        except OSError:
+            body = ""
+        print(f"# === {path} (score={score}) ===")
+        print(body)
+        print()
 
 
 if __name__ == "__main__":

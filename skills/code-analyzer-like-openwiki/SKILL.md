@@ -1,8 +1,8 @@
 ---
 name: code-analyzer-like-openwiki
-description: "触发词：分析代码库、生成技术文档、梳理架构、画架构图、新人上手、onboarding、第一篇PR、技术教程、了解项目、代码库百科、架构图、依赖关系图、feature story、新人怎么上手这个项目。只要用户想理解或上手一个代码库（即使没明说“生成文档”），都应使用本 skill。| Systematic codebase analysis that produces an open technical Wiki with Mermaid diagrams, dependency graphs, and feature stories; supports an onboarding mode generating a newcomer tutorial (local setup, first PR, troubleshooting). 本 skill 只读不改、只产出分析文档与架构图，用于理解或上手代码库，不修改代码。"
+description: "触发词：分析代码库、生成技术文档、梳理架构、画架构图、新人上手、onboarding、第一篇PR、技术教程、了解项目、代码库百科、架构图、依赖关系图、feature story、新人怎么上手这个项目。用户想理解或上手一个代码库时使用（即使没明说「生成文档」）：系统性分析并产出含 Mermaid 图表、依赖关系图、feature story 的开放式技术 Wiki，支持 onboarding 模式生成新人教程（本地搭建、第一篇 PR、排障）；只读不改，只产出分析文档与架构图，不修改代码。"
 metadata:
-  version: "3"
+  version: "4"
 ---
 
 # OpenWiki Codebase Analyzer — 代码库分析 → 技术 Wiki 生成

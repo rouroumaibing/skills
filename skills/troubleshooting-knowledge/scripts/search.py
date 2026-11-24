@@ -9,19 +9,28 @@ aliases/envs，兼容旧 topics）权重 3 + 正文权重 1，大小写不敏感
 排序：分数降序 → confidence 优先级（verified > observed-once > doc-sourced）→ 路径。
 过滤：默认只出 active 条目（--include-inactive 放开）；--scope oss|personal 分层过滤。
 命中行 hit= 标注来源（fm/body/fm+body/2gram）；无命中额外给 hint 提示换别名重试。
+**集成契约**：本 CLI 是跨 skill 唯一检索入口（消费方 troubleshooting/scripts/knowledge.py
+薄委托到此处），输出行格式与 `status=NO_KNOWLEDGE_HIT` 属集成契约，变更须同步
+consumer-contract.md 与契约冒烟测试。禁止消费方复刻打分实现（2026-11-24 实测：
+复刻版缺词边界防护已漂移，且绕过命中遥测）。
+命中遥测：CLI 检索默认追加一行 JSON 到 <root>/.usage-log.jsonl（ts/query/scope/hits），
+供「复核按命中触发」统计（被命中过的条目 / 无命中查询=场景缺口信号）；写入失败只
+warn 不影响检索；查重场景加 --no-log 避免污染使用统计。
 score_entry 的可选 detail 参数只用于带出来源，不传时行为不变（消费方契约不破）。
 
 用法
 ----
-* python3 scripts/search.py <关键词…> [--scope oss|personal] [--top N] [--include-inactive] [--root <知识库根>]
+* python3 scripts/search.py <关键词…> [--scope oss|personal] [--top N] [--include-inactive] [--no-log] [--root <知识库根>]
   （--root 省略时默认为本 skill 目录，即 scripts/ 的上一级）
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
 import argparse
+from datetime import datetime
 
 try:
     import yaml  # noqa: F401
@@ -134,6 +143,30 @@ def score_entry(fm: dict, body: str, terms: list[str],
     return score
 
 
+USAGE_LOG_NAME = ".usage-log.jsonl"
+
+
+def log_usage(root: str, terms: list[str], hits: list[dict],
+              scope: str | None) -> None:
+    """命中遥测：每次 CLI 检索追加一行 JSON 到 <root>/.usage-log.jsonl。
+
+    供「复核按命中触发」（SKILL.md 更新与合并节）统计：哪些条目被真实检索命中过、
+    哪些查询无命中（场景缺口信号）。写入失败只 warn，绝不影响检索结果与退出码。
+    查重（抽取流程第 1 步）请加 --no-log，避免污染使用统计。
+    """
+    record = {
+        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "query": terms,
+        "scope": scope or "",
+        "hits": hits,
+    }
+    try:
+        with open(os.path.join(root, USAGE_LOG_NAME), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        sys.stderr.write(f"warn: 命中日志写入失败（不影响检索）: {exc}\n")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="知识库检索 / 查重（打分可复现）")
     ap.add_argument("terms", nargs="+", help="查询关键词（组件/错误码/症状/别名混合，大小写不敏感）")
@@ -144,6 +177,8 @@ def main() -> None:
     ap.add_argument("--top", type=int, default=5, help="最多返回条目数（默认 5）")
     ap.add_argument("--include-inactive", action="store_true",
                     help="包含非 active 条目——默认只列 active")
+    ap.add_argument("--no-log", action="store_true",
+                    help="不写命中日志（查重时使用，避免污染使用统计）")
     args = ap.parse_args()
 
     root = args.root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -178,13 +213,19 @@ def main() -> None:
                            detail["hit"]))
     ranked.sort(key=lambda x: (-x[0], x[1], x[2]))
 
+    shown = ranked[: max(1, args.top)]
+    if not args.no_log:
+        hits = [{"entry": rel, "score": score, "conf": conf}
+                for score, _cr, rel, _sc, conf, _st, _hit in shown]
+        log_usage(root, terms, hits, args.scope)
+
     if not ranked:
         print("status=NO_KNOWLEDGE_HIT terms=%s" % " ".join(terms))
         print("hint=纯关键词匹配无命中：换别名/缩写/中英文叫法，或换种说法再试一次；"
               "仍无命中才走新建（见 SKILL.md 抽取流程第 1 步）")
         return
 
-    for score, _cr, rel, scope, conf, status, hit in ranked[: max(1, args.top)]:
+    for score, _cr, rel, scope, conf, status, hit in shown:
         print(f"score={score} hit={hit} scope={scope} conf={conf} status={status} {rel}")
 
 

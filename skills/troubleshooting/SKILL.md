@@ -1,9 +1,9 @@
 ---
 name: troubleshooting
-description: "触发词：排查问题、定位问题、查日志、查 pod、客户报错、某组件某版本出问题、切换到某个版本看代码、多仓库搜代码、连环境看机器/集群/节点日志；或要求执行集群/节点/DB 写操作（删 pod、scale 扩缩容、rollout restart、systemctl 重启、修数据等修复/回滚类诉求），即使用户没明确说 troubleshooting。统一入口：(1) 连跳板机（config.conn 公网/私网 IP）查集群 pod/节点日志；(2) 在多个本地代码库（config.codehub）查代码；(3) 根据客户报错与软件版本切到对应版本只读 worktree（config.worktree.workdir）定位（通常连不上客户环境）；可按 config.troubleshooting-knowledge 指向的知识库做知识导向定位（只读取水，不写死文件）。| Troubleshooting unified entry: SSH to the bastion for cluster pod/node logs, cross-repo code search (config.codehub), and version-specific read-only worktree lookup (config.worktree.workdir) — use whenever the user mentions troubleshooting, logs, pods, customer-reported errors, or cross-repo code search. Remediation writes (kubectl/SSH/DB) go only through scripts/apply.py (whitelist + T1/T2R/T2U/T3 tiers + mandatory backup), re-verified by scripts/verify.py (PASS/FAIL)."
+description: "触发词：排查问题、定位问题、查日志、查 pod、客户报错、某组件某版本出问题、切换到某个版本看代码、多仓库搜代码、连环境看机器/集群/节点日志；或要求执行集群/节点/DB 写操作（删 pod、scale 扩缩容、rollout restart、systemctl 重启、修数据等修复/回滚类诉求），即使用户没明确说 troubleshooting。统一入口：连跳板机查集群 pod/节点日志、在多个本地代码库查代码、按客户报错与软件版本切到对应版本只读 worktree 定位（通常连不上客户环境）；修复写操作只经 apply.py（白名单 + T1/T2R/T2U/T3 授权分层 + 强制备份），verify.py 复验不过回滚。"
 metadata:
   agent_created: true
-  version: "10"
+  version: "11"
 ---
 
 # Troubleshooting

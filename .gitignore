@@ -2,3 +2,4 @@
 .workbuddy/
 __pycache__/
 *.skill
+.usage-log.jsonl

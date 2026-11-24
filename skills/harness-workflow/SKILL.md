@@ -1,9 +1,9 @@
 ---
 name: harness-workflow
-description: "触发词：审计产物、审查、检查对否、artifact 校验、契约核查、证据核对、缺口清单、目标契约、规则登记表、升级触发清单、对抗推演、human-in-the-loop、先定契约再动手、防 AI 虚报、验证体系缺什么、给项目加验证环节、AI 写代码怎么验证、审计报告怎么落地、给建议排落地顺序、先做哪个。| Audits artifacts vs goal contract & rule registry; evidence-backed reports (gaps/evidence/fixes/decision-owner), flags degradation when unenforced; checkers span contract/scope/risk/AI-writable/evidence-pack/traceability/red-green/stamps R-VER-008/flaky R-VER-009; repo + chat modes; --survey probes verify assets/CI/tests, advises E2E/property/differential + P0/P1/P2 (report-only/non-judging) + landing plan; fixes carry adversarial replay + credibility grade; adopted redlines/CI gates = downstream criteria; reports archive to audits/; covers /goal substitutes and credential-at-rest boundaries. | 对产物对照契约与规则登记表审计，出带证据报告（缺口/证据/建议/由谁决策），未实装标注降级、报告归档 audits/；检查器覆盖契约锁定、范围、风险下限、AI 可写区、证据包、追溯、红绿、验证戳 R-VER-008 与 flaky R-VER-009；仓库与聊天双模式；--survey 探测验证体系、给 E2E/属性/差分与 P0/P1/P2 建议（只报不改、非合规判定）及落地计划；建议附对抗推演与可信度分级，采纳的 redlines/CI 门即下游判据；另答提交前验证、/goal 替代与证据/凭据落盘边界。"
+description: "触发词：审计产物、审查、检查对否、artifact 校验、契约核查、证据核对、缺口清单、目标契约、规则登记表、升级触发清单、对抗推演、human-in-the-loop、先定契约再动手、防 AI 虚报、验证体系缺什么、给项目加验证环节、AI 写代码怎么验证、审计报告怎么落地、给建议排落地顺序、先做哪个。对照目标契约与规则登记表审计 AI 研发产物，出带证据报告（缺口/建议/由谁决策），未实装如实标注降级；--survey 只报不改地探测验证体系并给 E2E/属性/差分与 P0/P1/P2 补齐建议及落地计划；报告归档被审项目 audits/，采纳的 redlines/CI 门即下游审计判据。"
 metadata:
   agent_created: true
-  version: "28"
+  version: "29"
 ---
 
 # harness-workflow（审计 skill：产物 × 契约 × 判据 → 带证据的审计报告）

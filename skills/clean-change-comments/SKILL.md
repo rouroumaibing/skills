@@ -1,9 +1,9 @@
 ---
 name: clean-change-comments
-description: "触发词：清理注释、整理注释、删掉变更叙述、注释规范、文档注释、只描述现状、不要写原来是/改为/不再、变更记录、决策记录、决策时间、提交前自查注释、顺手清理残留注释、代码里为什么有历史说明、注释复述实现逻辑、注释解释代码在做什么、函数注释写过详、AI生成注释啰嗦、写注释只该一句功能加参数、配置注释只说开关功能、配置注释冗余、配置注释过详、配置只描述用户字段、配置泄漏实现细节、改代码、写或改代码注释、改文档正文时，强制让注释与文档只描述「函数功能 + 输入/输出参数」、配置文件只说「这个开关控制什么功能」；由此自然覆盖「禁止变更叙述 / 禁止复述实现逻辑」等旧写法——注释不是功能说明就删，历史与决策不进注释、落到变更历史章节或 commit（决策日期不漏到标题/正文/状态行）；本 skill 只改注释、文档正文与配置文件注释，不改动业务逻辑代码。| Clean-code comments & docs convention: a comment, if any, states in one sentence what the function does plus its inputs/outputs; a config comment only says what the switch controls. This single principle subsumes the older \"no change-narration / no implementation-restatement\" rules — anything that isn't a function description gets deleted, and history/decisions go to a changelog or commit (decision dates never leak into titles/body). Ships a residual-narration scanner. @clean-change-comments"
+description: "触发词：清理注释、整理注释、删掉变更叙述、注释规范、文档注释、只描述现状、不要写原来是/改为/不再、变更记录、决策记录、决策时间、提交前自查注释、顺手清理残留注释、代码里为什么有历史说明、注释复述实现逻辑、注释解释代码在做什么、函数注释写过详、AI生成注释啰嗦、写注释只该一句功能加参数、配置注释只说开关功能、配置注释冗余、配置注释过详、配置只描述用户字段、配置泄漏实现细节、改代码、写或改代码注释、改文档正文时。强制注释只描述「函数功能 + 输入/输出参数」、配置注释只说「这个开关控制什么功能」，历史与决策落到变更历史或 commit（决策日期不进标题/正文）；只改注释/文档正文/配置注释，不动业务逻辑，附残留扫描脚本。@clean-change-comments"
 metadata:
   agent_created: true
-  version: "1"
+  version: "2"
 ---
 
 # clean-change-comments（注释规范：函数名即说明，注释只讲功能 + 参数）

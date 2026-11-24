@@ -1,9 +1,9 @@
 ---
 name: 10x-learn
-description: "触发词：系统学习、吃透某领域、快速入门、10xLearn、深度调研。10-step AI closed-loop deep-learning methodology blending STORM multi-perspective research with the Rahul learning loop (retrieval practice, Feynman technique, Zone of Proximal Development, Pareto 20%); executed across four stages — 入门→资源→吃透→回顾 — with ready-to-use prompts at every step."
+description: "触发词：系统学习、吃透某领域、快速入门、10xLearn、深度调研。十步 AI 深度学习闭环：STORM 多视角调研 + 学习环（检索练习、费曼技巧、最近发展区、帕累托 20%），按 入门→资源→吃透→回顾 四阶段执行，每步配可直接使用的提示词，最终产出一页速查表。"
 metadata:
   agent_created: true
-  version: "1"
+  version: "2"
 ---
 
 # 10xLearn — AI 十倍速深度学习闭环

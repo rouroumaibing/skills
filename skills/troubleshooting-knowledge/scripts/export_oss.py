@@ -29,11 +29,15 @@ def die(reason: str) -> None:
     sys.exit(1)
 
 
+IGNORE_FILES = {".usage-log.jsonl"}  # 命中遥测属运行时数据，不进分发物
+
+
 def _ignore_personal(dirpath: str, names: list[str]) -> list[str]:
-    """只在 knowledge/ 目录下忽略 personal 子目录。"""
+    """knowledge/ 下忽略 personal 子目录；任意位置忽略命中日志。"""
+    ignored = [n for n in names if n in IGNORE_FILES]
     if os.path.basename(dirpath.rstrip(os.sep)) == "knowledge":
-        return [n for n in names if n == "personal"]
-    return []
+        ignored.extend(n for n in names if n == "personal")
+    return ignored
 
 
 def main() -> None:
