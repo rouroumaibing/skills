@@ -54,7 +54,7 @@ metadata:
    - 优先提取合入主干（Merged）且包含 `feat/feature/story` 的 PR 或 Commit。
    - **语义借用：** 使用 PR Title 和 Description 提取 Story 名称、用户角色 (Actor) 和业务目标 (Goal)。
    - **作用域限定：** 将该 PR 包含的变更文件列表 (Changed Files) 作为代码追踪的精确搜寻范围。
-   - **[repo-agnostic 回退]** 若提交信息为**日期快照式**或无 `feat` 前缀（如 SDP 的 `20261028`），**不强行匹配 PR 标题**；改为从 Phase 2 已溯源的关键业务链路归纳 Story（名称/Actor/Goal 由链路语义抽取），并将该链路涉及的源码文件作为代码追踪范围。此回退路径必须仍过下方双源校验。
+   - **[repo-agnostic 回退]** 若提交信息为**日期快照式**或无 `feat` 前缀，**不强行匹配 PR 标题**；改为从 Phase 2 已溯源的关键业务链路归纳 Story（名称/Actor/Goal 由链路语义抽取），并将该链路涉及的源码文件作为代码追踪范围。此回退路径必须仍过下方双源校验。
 2. **异步链路拼接 (Async Lineage)**
    - 当分析包含 Kafka / RabbitMQ 等消息队列的代码时，扫描 Producer 的发送 API 与 Consumer 的监听注解。
    - **Topic/Queue 匹配：** Producer 发送的 Topic 与 Consumer 监听的 Topic 一致 → 判定为连续链路。

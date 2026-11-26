@@ -1,6 +1,6 @@
 ---
 name: superpowers-project-experiences
-description: "触发词：总结经验、归档、建立索引、更新索引。Distills six-element engineering knowledge from delivered plans, builds module index, and generates regeneration prompts."
+description: "触发词：总结经验、归档、建立索引、更新索引。从已交付计划中提炼六要素工程知识，建立模块索引并生成重生成提示词。"
 metadata:
   version: "1"
 ---

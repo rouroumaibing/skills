@@ -24,7 +24,7 @@ All skills in this repository. Click links for full documentation.
 | [`troubleshooting`](skills/troubleshooting/SKILL.md) | 排查统一入口：连环境查日志、多仓库查代码、按版本切代码定位；写操作走 apply.py 白名单 + 备份 | `排查问题` `定位问题` `查日志` `查 pod` `客户报错` `某组件某版本出问题` `切换到某个版本看代码` `多仓库搜代码` `连环境看机器/集群/节点日志` |
 | [`troubleshooting-knowledge`](skills/troubleshooting-knowledge/SKILL.md) | 把排查结论抽成结构化脱敏知识条目沉淀进 knowledge/（oss/personal 两层），可检索、更新、作废 | `提取知识` `沉淀知识` `写知识库` `知识库整理` `检索知识库` `建知识条目` `把这次排查结论存下来` `知识库里有没有关于 X 的记录` |
 | [`skill-freshness-audit`](skills/skill-freshness-audit/SKILL.md) | 审计 skill 库的新鲜度/冗余/事实性过期，按 persist/sunset/never-remove 分类，只报不改 | `审计skill库` `检查skill是否过时` `skill保质期` `哪些skill冗余` `skill特有性检查` `生成skill审计清单` `模型升级后复查skill` `清理/精简过时的skill` |
-| [`automation-task-execution`](skills/automation-task-execution/SKILL.md) | 自动化任务执行协议：缺口分析→真实探索→冒烟跑通→批量实现→经验沉淀，九对账收尾 | `自动化任务` `生成自动化代码` `把手工用例转成自动化` `接口自动化` `UI 测试自动化` `E2E 脚本` `用例代码化` `冒烟跑通一个用例` `探索性执行` `缺口分析` `流程缺什么信息` `质量门` `代码纪律` `交付质量` |
+| [`automation-task-execution`](skills/automation-task-execution/SKILL.md) | AI 辅助任务执行与代码交付协议（以代码开发为主场，自动化用例是其中一类交付物）：缺口分析→真实探索→冒烟跑通→批量实现→经验沉淀，九对账收尾 | `代码开发` `写代码` `改代码` `重构` `代码交付` `部署脚本` `CLI` `配置工具` `自动化任务` `把手工流程转成自动化代码 / 用例` `接口自动化` `UI 自动化` `E2E 脚本` `冒烟跑通` `探索性执行` `缺口分析` `流程缺什么信息` `质量门` `代码纪律` `交付质量` |
 | [`ambitious`](skills/ambitious/SKILL.md) | 按「高度·深度·广度」把任务改写成更有野心的版本，先出方案、外部验证、等确认再动手 | `更有野心` `把任务想高/想深/想宽` `目标抬升` `深度改写` `外部验证` `/ambitious` `@ambitious` |
 | [`skillormcp`](skills/skillormcp/SKILL.md) | 判定能力该做成 Skill 还是 MCP 并审计落点错位，输出部署形态；只报建议不改文件 | `判定skill还是MCP` `skill和mcp怎么选` `落点审计` `能力错位` `下沉mcp` `拆分建议` `新增能力该放哪` `skill是否在干MCP的活` `发布前核对落点` `@skillormcp` |
 | [`trigger-eval`](skills/trigger-eval/SKILL.md) | 用独立子 agent 当评审，对一批本地 skill 做触发判定评测，出命中率/FP/FN 与混淆矩阵；零登录替代官方评测 harness | `触发评测` `skill 触发测试` `trigger eval` `description 命中率` `误触发` `漏触发` `skill 冲突检测` |
@@ -46,7 +46,7 @@ All skills in this repository. Click links for full documentation.
 ### 新增 Skill
 
 1. 创建目录 `skills/<skill-name>/`
-2. 编写 `SKILL.md`（遵循上述 5 条规范）
+2. 编写 `SKILL.md`（遵循上述 6 条规范）
 3. 按「测试约定」生成临时测试并跑通（测试文件**不提交**）
 4. 更新本文件 Skills 索引表格
 5. 提交前用 skill-creator 的校验器确认通过

@@ -22,7 +22,7 @@ All skills in this repository. Click links for full documentation.
 | [`troubleshooting`](skills/troubleshooting/SKILL.md) | Unified troubleshooting entry: env logs, cross-repo code search, version-switched code location; writes go through apply.py whitelist + backup | `排查问题` `定位问题` `查日志` `查 pod` `客户报错` `某组件某版本出问题` `切换到某个版本看代码` `多仓库搜代码` `连环境看机器/集群/节点日志` |
 | [`troubleshooting-knowledge`](skills/troubleshooting-knowledge/SKILL.md) | Distills troubleshooting conclusions into redacted knowledge entries in knowledge/ (oss/personal tiers); searchable, updatable, deprecable | `提取知识` `沉淀知识` `写知识库` `知识库整理` `检索知识库` `建知识条目` `把这次排查结论存下来` `知识库里有没有关于 X 的记录` |
 | [`skill-freshness-audit`](skills/skill-freshness-audit/SKILL.md) | Audits a skill collection for freshness/redundancy/factual rot, classified as persist/sunset/never-remove; report-only | `审计skill库` `检查skill是否过时` `skill保质期` `哪些skill冗余` `skill特有性检查` `生成skill审计清单` `模型升级后复查skill` `清理/精简过时的skill` |
-| [`automation-task-execution`](skills/automation-task-execution/SKILL.md) | Automation execution protocol: gap analysis → real exploration → smoke one case → batch implementation → knowledge capture, closed by a nine-item reconciliation | `自动化任务` `生成自动化代码` `把手工用例转成自动化` `接口自动化` `UI 测试自动化` `E2E 脚本` `用例代码化` `冒烟跑通一个用例` `探索性执行` `缺口分析` `流程缺什么信息` `质量门` `代码纪律` `交付质量` |
+| [`automation-task-execution`](skills/automation-task-execution/SKILL.md) | AI-assisted task execution and code delivery protocol (code development as the primary scenario, automation tests as one deliverable type): gap analysis → real exploration → smoke test → batch implementation → knowledge capture, closed by a nine-item reconciliation | `代码开发` `写代码` `改代码` `重构` `代码交付` `部署脚本` `CLI` `配置工具` `自动化任务` `把手工流程转成自动化代码 / 用例` `接口自动化` `UI 自动化` `E2E 脚本` `冒烟跑通` `探索性执行` `缺口分析` `流程缺什么信息` `质量门` `代码纪律` `交付质量` |
 | [`ambitious`](skills/ambitious/SKILL.md) | Rewrites tasks into more ambitious versions along altitude/depth/breadth; proposes a plan and waits for confirmation | `更有野心` `把任务想高/想深/想宽` `目标抬升` `深度改写` `外部验证` `/ambitious` `@ambitious` |
 | [`skillormcp`](skills/skillormcp/SKILL.md) | Decides Skill vs MCP, audits placement misalignment and reports deployment shape; advisory only | `判定skill还是MCP` `skill和mcp怎么选` `落点审计` `能力错位` `下沉mcp` `拆分建议` `新增能力该放哪` `skill是否在干MCP的活` `发布前核对落点` `@skillormcp` |
 | [`trigger-eval`](skills/trigger-eval/SKILL.md) | Subagent-proxy trigger evaluation for a local skill set, reporting hit rate / FP / FN and a confusion matrix; zero-login replacement for the official eval harness | `触发评测` `skill 触发测试` `trigger eval` `description 命中率` `误触发` `漏触发` `skill 冲突检测` |
@@ -44,7 +44,7 @@ All skills in this repository. Click links for full documentation.
 ### Adding a New Skill
 
 1. Create directory `skills/<skill-name>/`
-2. Write `SKILL.md` (following the 5 rules above)
+2. Write `SKILL.md` (following the 6 rules above)
 3. Generate ephemeral tests per "Testing Convention" and run them green (test files are **not committed**)
 4. Update the Skills index table in this file
 5. Before committing, verify it passes the skill-creator validator

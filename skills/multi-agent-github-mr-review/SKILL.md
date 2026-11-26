@@ -1,6 +1,6 @@
 ---
 name: multi-agent-github-mr-review
-description: "触发词：@某agent+MR链接、GitHub MR 检视、PR review、本地生成代码后自检、提交前代码审查。10-phase adversarial code review pipeline：对 GitHub MR 产出行级 DiffNote 并阻塞合入；无 MR 的本地自检场景，套用相同检查维度对本地 diff/分支审查并直接输出意见集。"
+description: "触发词：@某agent+MR链接、GitHub MR 检视、PR review、本地生成代码后自检、提交前代码审查。十阶段对抗式代码审查流水线：对 GitHub MR 产出行级 DiffNote 并阻塞合入；无 MR 的本地自检场景，套用相同检查维度对本地 diff/分支审查并直接输出意见集。"
 metadata:
   version: "1"
 ---
